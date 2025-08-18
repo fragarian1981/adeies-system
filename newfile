@@ -278,7 +278,8 @@ function checkLeaveBalance($pdo, $mitroo, $leave_type, $days_requested, $travel_
         } else {
             return ['status' => false, 'message' => "Η άδεια $leave_type είναι σταθερά 5 ημέρες"];
         }
-        
+    } elseif ($leave_type == 'ΑΙΤΗΣΗ_ΩΡΑΡΙΟΥ') {
+        return ['status' => true, 'current_balance' => 'Αίτηση για εργασία με συγκεκριμένο ωράριο - Απαιτείται έγκριση'];    
     } elseif (in_array($leave_type, ['ΑΝΑΡΡΩΤΙΚΗ', 'ΕΚΠΑΙΔΕΥΤΙΚΗ', 'ΜΑΚΡΑΣ_ΔΙΑΡΚΕΙΑΣ', 'ΣΧΟΛΙΚΗ_ΔΟΚΙΜΩΝ', 'ΜΗΤΡΟΤΗΤΑΣ', 'ΑΝΑΤΡΟΦΗΣ', 'ΙΑΤΡΙΚΗ_ΑΝΑΠΑΡΑΓΩΓΗ', 'ΕΠΙΠΡΟΣΘΕΤΗ_ΑΝΑΤΡΟΦΗΣ'])) {
         return ['status' => true, 'current_balance' => 'Ειδικός τύπος άδειας - Απαιτείται έγκριση από προϊστάμενο'];
         
@@ -1581,7 +1582,7 @@ $current_system_year = (int)getSystemSetting($pdo, 'current_year', date('Y'));
                         <label for="imerominia">Ημερομηνία Έναρξης:</label>
                         <input type="date" id="imerominia" name="imerominia" required>
                         <small id="date-note" style="font-size: 11px; color: #666; display: block; margin-top: 3px;">
-                            Επιλέξτε την ημερομηνία έναρξης της άδειας
+                            Επιλέξτε την ημερομηνία έναρξης της άδειας ή ποιά ημέρα αφορά η αίτηση σας.
                         </small>
                     </div>
                 </div>
@@ -1599,7 +1600,7 @@ $current_system_year = (int)getSystemSetting($pdo, 'current_year', date('Y'));
                         <label for="wres">Ώρες:</label>
                         <input type="number" id="wres" name="wres" min="0" max="9">
                         <small style="color: #666; font-size: 11px; display: block; margin-top: 3px;">
-                            Για ολιγόωρη άδεια (1-9 ώρες)
+                            Για ολιγόωρη άδεια (1-3 ώρες ανά ημέρα & 9 ώρες ανά μήνα)
                         </small>
                     </div>
                     <div class="form-group" id="hour-range-row" style="display:none;">
@@ -1624,14 +1625,14 @@ $current_system_year = (int)getSystemSetting($pdo, 'current_year', date('Y'));
                 <div class="form-row">
                     <div class="form-group">
                         <label for="logos">Αιτιολογία:</label>
-                        <textarea id="logos" name="logos" rows="3" placeholder="Περιγράψτε τον λόγο της άδειας. Στην αίτηση ολιγόωρης να αναγράφετε απαραίτητα  απο ...:... έως ...:... ώρα" required></textarea>
+                        <textarea id="logos" name="logos" rows="3" placeholder="Περιγράψτε τον λόγο της άδειας. Στην αίτηση ειδικού ωραρίου αν επιθυμείτε αναγράψτε το λόγο ή βάλτε τελεία (.)" required></textarea>
                     </div>
                     
                     <div class="form-group">
                         <label for="topos_dianysis">Η άδεια μου θα διανυθεί:</label>
                         <input type="text" id="topos_dianysis" name="topos_dianysis" placeholder="Αναγράψτε την πόλη ή χώρα διάνυσης της άδειας" maxlength="100" required>
                         <small style="color: #666; font-size: 11px; display: block; margin-top: 3px;">
-                            <strong>Υποχρεωτικό για όλους τους τύπους αδειών</strong>
+                            <strong>Υποχρεωτικό για όλους τους τύπους αδειών. Βάλτε τελεία (.) σε περίπτωση που δεν χρειάζεται</strong>
                         </small>
                     </div>
                 </div>
@@ -1663,14 +1664,14 @@ $current_system_year = (int)getSystemSetting($pdo, 'current_year', date('Y'));
         <?php endforeach; ?>
     </select>
     <small style="color: #666; font-size: 11px; display: block; margin-top: 3px;">
-        Θα σταλεί Email ενημέρωσης στον επιλεγμένο προϊστάμενο
+        Θα σταλεί Email ενημέρωσης στον επιλεγμένο προϊστάμενο (Σε μελλοντική αναβάθμιση)
     </small>
 </div>           
                 <button type="submit" class="btn">🚀 Υποβολή Αίτησης</button>
             </form>
         </div>
 
-        <!-- ΔΙΟΡΘΩΜΕΝΗ Καρτέλα Των Αιτήσεων Μου -->
+        <!-- Καρτέλα Των Αιτήσεων Μου -->
         <div id="my-requests-tab" class="tab-content">
             <h2>Οι Αιτήσεις Μου</h2>
             
@@ -2079,20 +2080,20 @@ $employee_name = trim($employee_name);
         class="btn btn-sm"
         style="background: #28a745; padding: 6px 12px; font-size: 11px;"
         onclick="printLeaveRequest(
-                '<?php echo (int)$request['id']; ?>',
+                <?php echo (int)$request['id']; ?>,
                 '<?php echo addslashes($request['ΟΝΟΜΑ'] . ' ' . $request['ΕΠΩΝΥΜΟ']); ?>',
                 '<?php echo addslashes($request['typos']); ?>',
                 '<?php echo $request['imerominia']; ?>',
-                '<?php echo (int)$request['meres']; ?>',
+                <?php echo (int)$request['meres']; ?>,
                 '<?php echo addslashes($request['logos']); ?>',
                 '<?php echo addslashes($request['topos_dianysis']); ?>',
-                '<?php echo (int)$request['wres']; ?>',
+                <?php echo (int)$request['wres']; ?>,
                 '<?php echo $request['ora_enarxis'] ?? ''; ?>',
                 '<?php echo $request['ora_lixis'] ?? ''; ?>',
                 '<?php echo addslashes($request['mitroo'] ?? ''); ?>',
                 '<?php echo addslashes($request['ΒΑΘΜΟΣ'] ?? ''); ?>'
             )"
-       title="Εκτύπωση Άδειας">
+        title="Εκτύπωση Άδειας">
     🖨️ Εκτύπωση
 </button>
 </td>
@@ -3908,7 +3909,7 @@ function deleteTestBalances() {
 
 <?php if (isset($_SESSION['is_gdye']) && $_SESSION['is_gdye']): ?>
 <script>
-	function printLeaveRequest(requestId, employeeName, leaveType, startDate, days, reason, location, hours, oraStart, oraEnd) {
+	function printLeaveRequest(requestId, employeeName, leaveType, startDate, days, reason, location, hours, oraStart, oraEnd, mitroo, bathmos) {
 		var printWindow = window.open('', '_blank');
     
     if (!printWindow) {
