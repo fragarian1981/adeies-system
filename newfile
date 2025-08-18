@@ -147,12 +147,25 @@ function isManager($pdo, $mitroo) {
     return $result == 1;
 }
 
-// ΔΙΟΡΘΩΜΕΝΗ συνάρτηση για έλεγχος υπολοίπου άδειας (ΝΕΕΣ ΤΙΜΕΣ)
+// ΝΕΑ ΣΥΝΑΡΤΗΣΗ checkLeaveBalance με πλήρη λογική (2025)
 function checkLeaveBalance($pdo, $mitroo, $leave_type, $days_requested, $travel_days = 0, $hours_requested = 0) {
     global $leave_types_mapping;
     
     $current_year = date('Y');
     $current_month = date('n');
+    $current_date = date('Y-m-d');
+    
+    // ΕΞΑΙΡΕΣΗ: Αίτηση Ειδικού Ωραρίου - Πάντα επιτρέπεται
+    if ($leave_type == 'ΑΙΤΗΣΗ_ΩΡΑΡΙΟΥ') {
+        return [
+            'status' => true, 
+            'current_balance' => 'Ειδικό ωράριο - Χωρίς περιορισμούς',
+            'warnings' => []
+        ];
+    }
+    
+    $warnings = [];
+    $severe_warnings = [];
     
     // Έλεγχος αν υπάρχει εγγραφή για τον υπάλληλο
     $stmt = $pdo->prepare("SELECT * FROM adeies_ypoloipa WHERE ΜΗΤΡΩΟ = ? AND (ΕΤΟΣ = ? OR ΕΤΟΣ IS NULL) LIMIT 1");
@@ -160,67 +173,114 @@ function checkLeaveBalance($pdo, $mitroo, $leave_type, $days_requested, $travel_
     $balance_data = $stmt->fetch();
     
     if (!$balance_data) {
-        // Δημιουργία νέας εγγραφής με τα ΔΙΟΡΘΩΜΕΝΑ προεπιλεγμένα υπόλοιπα
+        // Δημιουργία νέας εγγραφής με προεπιλεγμένα υπόλοιπα
         $stmt = $pdo->prepare("SELECT ΟΝΟΜΑ, ΕΠΩΝΥΜΟ FROM users WHERE ΜΗΤΡΩΟ = ?");
         $stmt->execute([$mitroo]);
         $user = $stmt->fetch();
         
         if ($user) {
             $full_name = $user['ΟΝΟΜΑ'] . ' ' . $user['ΕΠΩΝΥΜΟ'];
-            $stmt = $pdo->prepare("INSERT INTO adeies_ypoloipa (ΜΗΤΡΩΟ, ΟΝΟΜΑΤΕΠΩΝΥΜΟ, YPOTLIPO_HMERES, ΥΠΟΛΟΙΠΟ_ΚΑΝΟΝΙΚΗΣ, ΥΠΟΛΟΙΠΟ_ΒΡΑΧΕΙΑΣ, ΥΠΟΛΟΙΠΟ_ΠΟΡΕΙΑΣ_ΚΑΝΟΝΙΚΗΣ, ΥΠΟΛΟΙΠΟ_ΠΟΡΕΙΑΣ_ΒΡΑΧΕΙΑΣ, ΥΠΟΛΟΙΠΟ_ΟΛΙΓΟΩΡΗΣ_ΜΗΝΑΣ, ΤΕΛΕΥΤΑΙΑ_ΟΛΙΓΟΩΡΗ_ΜΗΝΑΣ, ΥΠΟΛΟΙΠΟ_ΣΧΟΛΙΚΗΣ_ΠΟΡΕΙΑΣ, ΥΠΟΛΟΙΠΟ_ΕΞΕΤΑΣΕΩΝ, ΥΠΟΛΟΙΠΟ_ΝΟΣΗΛΕΙΑΣ, ΥΠΟΛΟΙΠΟ_ΑΣΘΕΝΕΙΑΣ_ΤΕΚΝΩΝ, PREVIOUS_YEAR_KANONIKI, PREVIOUS_YEAR_VRAHEIA, ΕΤΟΣ, TELEUTAIA_ENIMEROSI) VALUES (?, ?, 30, 30, 7, 4, 4, 9, ?, 8, 14, 22, 10, 0, 0, ?, CURDATE())");
+            // ΣΗΜΑΝΤΙΚΟ: Κατηγορία 2 ξεκινάει από 0
+            $stmt = $pdo->prepare("INSERT INTO adeies_ypoloipa (ΜΗΤΡΩΟ, ΟΝΟΜΑΤΕΠΩΝΥΜΟ, YPOTLIPO_HMERES, ΥΠΟΛΟΙΠΟ_ΚΑΝΟΝΙΚΗΣ, ΥΠΟΛΟΙΠΟ_ΒΡΑΧΕΙΑΣ, ΥΠΟΛΟΙΠΟ_ΠΟΡΕΙΑΣ_ΚΑΝΟΝΙΚΗΣ, ΥΠΟΛΟΙΠΟ_ΠΟΡΕΙΑΣ_ΒΡΑΧΕΙΑΣ, ΥΠΟΛΟΙΠΟ_ΟΛΙΓΟΩΡΗΣ_ΜΗΝΑΣ, ΤΕΛΕΥΤΑΙΑ_ΟΛΙΓΟΩΡΗ_ΜΗΝΑΣ, ΥΠΟΛΟΙΠΟ_ΣΧΟΛΙΚΗΣ_ΠΟΡΕΙΑΣ, ΥΠΟΛΟΙΠΟ_ΕΞΕΤΑΣΕΩΝ, ΥΠΟΛΟΙΠΟ_ΝΟΣΗΛΕΙΑΣ, ΥΠΟΛΟΙΠΟ_ΑΣΘΕΝΕΙΑΣ_ΤΕΚΝΩΝ, PREVIOUS_YEAR_KANONIKI, PREVIOUS_YEAR_VRAHEIA, ΕΤΟΣ, TELEUTAIA_ENIMEROSI) VALUES (?, ?, 30, 30, 7, 4, 4, 9, ?, 8, 14, 22, 0, 0, 0, ?, CURDATE())");
             $stmt->execute([$mitroo, $full_name, $current_month, $current_year]);
             
             $balance_data = [
-                'ΥΠΟΛΟΙΠΟ_ΚΑΝΟΝΙΚΗΣ' => 30,
-                'ΥΠΟΛΟΙΠΟ_ΒΡΑΧΕΙΑΣ' => 7,
-                'ΥΠΟΛΟΙΠΟ_ΠΟΡΕΙΑΣ_ΚΑΝΟΝΙΚΗΣ' => 4,
-                'ΥΠΟΛΟΙΠΟ_ΠΟΡΕΙΑΣ_ΒΡΑΧΕΙΑΣ' => 4,
-                'ΥΠΟΛΟΙΠΟ_ΟΛΙΓΟΩΡΗΣ_ΜΗΝΑΣ' => 9,
-                'ΤΕΛΕΥΤΑΙΑ_ΟΛΙΓΟΩΡΗ_ΜΗΝΑΣ' => $current_month,
-                'ΥΠΟΛΟΙΠΟ_ΣΧΟΛΙΚΗΣ_ΠΟΡΕΙΑΣ' => 8,
-                'ΥΠΟΛΟΙΠΟ_ΕΞΕΤΑΣΕΩΝ' => 14,
-                'ΥΠΟΛΟΙΠΟ_ΝΟΣΗΛΕΙΑΣ' => 22,
-                'ΥΠΟΛΟΙΠΟ_ΑΣΘΕΝΕΙΑΣ_ΤΕΚΝΩΝ' => 10,
-                'PREVIOUS_YEAR_KANONIKI' => 0,
-                'PREVIOUS_YEAR_VRAHEIA' => 0
+                'ΥΠΟΛΟΙΠΟ_ΚΑΝΟΝΙΚΗΣ' => 30, 'ΥΠΟΛΟΙΠΟ_ΒΡΑΧΕΙΑΣ' => 7,
+                'ΥΠΟΛΟΙΠΟ_ΠΟΡΕΙΑΣ_ΚΑΝΟΝΙΚΗΣ' => 4, 'ΥΠΟΛΟΙΠΟ_ΠΟΡΕΙΑΣ_ΒΡΑΧΕΙΑΣ' => 4,
+                'ΥΠΟΛΟΙΠΟ_ΟΛΙΓΟΩΡΗΣ_ΜΗΝΑΣ' => 9, 'ΤΕΛΕΥΤΑΙΑ_ΟΛΙΓΟΩΡΗ_ΜΗΝΑΣ' => $current_month,
+                'ΥΠΟΛΟΙΠΟ_ΣΧΟΛΙΚΗΣ_ΠΟΡΕΙΑΣ' => 8, 'ΥΠΟΛΟΙΠΟ_ΕΞΕΤΑΣΕΩΝ' => 14,
+                'ΥΠΟΛΟΙΠΟ_ΝΟΣΗΛΕΙΑΣ' => 22, 'ΥΠΟΛΟΙΠΟ_ΑΣΘΕΝΕΙΑΣ_ΤΕΚΝΩΝ' => 0,
+                'PREVIOUS_YEAR_KANONIKI' => 0, 'PREVIOUS_YEAR_VRAHEIA' => 0
             ];
         } else {
-            return ['status' => false, 'message' => 'Δεν βρέθηκε υπάλληλος με αυτό το μητρώο'];
+            return ['status' => false, 'message' => 'Δεν βρέθηκε υπάλληλος με αυτό το μητρώο', 'warnings' => []];
         }
     }
     
-    // ΕΝΗΜΕΡΩΜΕΝΟΣ έλεγχος βάσει τύπου άδειας
+    // Λήψη ημερομηνιών λήξης από settings
+    $kanoniki_expiry = getSystemSetting($pdo, 'kanoniki_adeia_expiry', '2026-03-31');
+    $vraheia_expiry = getSystemSetting($pdo, 'vraheia_adeia_expiry', '2025-12-31');
+    
+    // ==========================================
+    // ΚΑΤΗΓΟΡΙΑ 1: ΣΤΑΘΕΡΟΣ ΑΡΙΘΜΟΣ → ΑΦΑΙΡΕΣΗ
+    // ==========================================
+    
     if ($leave_type == 'ΚΑΝΟΝΙΚΗ') {
+        // Έλεγχος ημερομηνίας λήξης
+        if ($current_date > $kanoniki_expiry) {
+            $severe_warnings[] = "🔴 ΛΗΞΗ: Η κανονική άδεια έχει λήξει στις " . date('d/m/Y', strtotime($kanoniki_expiry));
+        }
+        
         $current_balance = $balance_data['ΥΠΟΛΟΙΠΟ_ΚΑΝΟΝΙΚΗΣ'];
         $previous_balance = $balance_data['PREVIOUS_YEAR_KANONIKI'] ?? 0;
         $travel_balance = $balance_data['ΥΠΟΛΟΙΠΟ_ΠΟΡΕΙΑΣ_ΚΑΝΟΝΙΚΗΣ'];
-        
         $total_available = $current_balance + $previous_balance;
         
-        if ($total_available >= $days_requested && $travel_balance >= $travel_days) {
-            return ['status' => true, 'current_balance' => $current_balance, 'previous_balance' => $previous_balance, 'travel_balance' => $travel_balance];
-        } else {
-            return ['status' => false, 'message' => "Ανεπαρκές υπόλοιπο. Διαθέσιμες: $current_balance τρέχοντος έτους + $previous_balance προηγούμενου = $total_available συνολικά, Πορεία: $travel_balance ημέρες"];
+        // Έλεγχος υπέρβασης κανονικής άδειας
+        if ($total_available < $days_requested) {
+            $severe_warnings[] = "🔴 ΥΠΕΡΒΑΣΗ ΚΑΝΟΝΙΚΗΣ: Ζητάτε $days_requested ημέρες αλλά έχετε $total_available διαθέσιμες";
         }
         
+        // Έλεγχος υπέρβασης πορείας + ΚΑΝΟΝΑΣ "όλα ή τίποτα"
+        if ($travel_days > 0) {
+            if ($travel_balance < $travel_days) {
+                $severe_warnings[] = "🔴 ΥΠΕΡΒΑΣΗ ΠΟΡΕΙΑΣ: Ζητάτε $travel_days ημέρες πορείας αλλά έχετε $travel_balance διαθέσιμες";
+            }
+            if ($travel_days < $travel_balance && $travel_days > 0) {
+                $warnings[] = "⚠️ ΠΡΟΣΟΧΗ ΠΟΡΕΙΑ: Ζητάτε $travel_days από τις $travel_balance διαθέσιμες. ΑΝ ΕΓΚΡΙΘΕΙ θα χάσετε τις υπόλοιπες " . ($travel_balance - $travel_days) . " ημέρες πορείας!";
+            }
+        }
+        
+        return [
+            'status' => true,
+            'current_balance' => $current_balance,
+            'previous_balance' => $previous_balance, 
+            'travel_balance' => $travel_balance,
+            'warnings' => $warnings,
+            'severe_warnings' => $severe_warnings
+        ];
+        
     } elseif ($leave_type == 'ΒΡΑΧΕΙΑ') {
+        // Έλεγχος ημερομηνίας λήξης
+        if ($current_date > $vraheia_expiry) {
+            $severe_warnings[] = "🔴 ΛΗΞΗ: Η βραχεία άδεια έχει λήξει στις " . date('d/m/Y', strtotime($vraheia_expiry));
+        }
+        
+        if ($days_requested < 1) {
+            $severe_warnings[] = "🔴 ΛΑΘΟΣ: Η βραχεία άδεια πρέπει να είναι τουλάχιστον 1 ημέρα";
+        }
+        
         $current_balance = $balance_data['ΥΠΟΛΟΙΠΟ_ΒΡΑΧΕΙΑΣ'];
         $previous_balance = $balance_data['PREVIOUS_YEAR_VRAHEIA'] ?? 0;
         $travel_balance = $balance_data['ΥΠΟΛΟΙΠΟ_ΠΟΡΕΙΑΣ_ΒΡΑΧΕΙΑΣ'];
-        
         $total_available = $current_balance + $previous_balance;
         
-        if ($days_requested < 1) {
-            return ['status' => false, 'message' => 'Η βραχεία άδεια πρέπει να είναι τουλάχιστον 1 ημέρα'];
+        // Έλεγχος υπέρβασης βραχείας άδειας
+        if ($total_available < $days_requested) {
+            $severe_warnings[] = "🔴 ΥΠΕΡΒΑΣΗ ΒΡΑΧΕΙΑΣ: Ζητάτε $days_requested ημέρες αλλά έχετε $total_available διαθέσιμες";
         }
         
-        if ($total_available >= $days_requested && $travel_balance >= $travel_days) {
-            return ['status' => true, 'current_balance' => $current_balance, 'previous_balance' => $previous_balance, 'travel_balance' => $travel_balance];
-        } else {
-            return ['status' => false, 'message' => "Ανεπαρκές υπόλοιπο. Διαθέσιμες: $current_balance τρέχοντος έτους + $previous_balance προηγούμενου = $total_available συνολικά, Πορεία: $travel_balance ημέρες"];
+        // Έλεγχος υπέρβασης πορείας + ΚΑΝΟΝΑΣ "όλα ή τίποτα"
+        if ($travel_days > 0) {
+            if ($travel_balance < $travel_days) {
+                $severe_warnings[] = "🔴 ΥΠΕΡΒΑΣΗ ΠΟΡΕΙΑΣ: Ζητάτε $travel_days ημέρες πορείας αλλά έχετε $travel_balance διαθέσιμες";
+            }
+            if ($travel_days < $travel_balance && $travel_days > 0) {
+                $warnings[] = "⚠️ ΠΡΟΣΟΧΗ ΠΟΡΕΙΑ: Ζητάτε $travel_days από τις $travel_balance διαθέσιμες. ΑΝ ΕΓΚΡΙΘΕΙ θα χάσετε τις υπόλοιπες " . ($travel_balance - $travel_days) . " ημέρες πορείας!";
+            }
         }
+        
+        return [
+            'status' => true,
+            'current_balance' => $current_balance,
+            'previous_balance' => $previous_balance, 
+            'travel_balance' => $travel_balance,
+            'warnings' => $warnings,
+            'severe_warnings' => $severe_warnings
+        ];
         
     } elseif ($leave_type == 'ΟΛΙΓΟΩΡΗ') {
+        // Έλεγχος και ανανέωση μηνιαίου υπολοίπου
         $last_month = $balance_data['ΤΕΛΕΥΤΑΙΑ_ΟΛΙΓΟΩΡΗ_ΜΗΝΑΣ'];
         if ($last_month != $current_month) {
             $stmt = $pdo->prepare("UPDATE adeies_ypoloipa SET ΥΠΟΛΟΙΠΟ_ΟΛΙΓΟΩΡΗΣ_ΜΗΝΑΣ = 9, ΤΕΛΕΥΤΑΙΑ_ΟΛΙΓΟΩΡΗ_ΜΗΝΑΣ = ? WHERE ΜΗΤΡΩΟ = ? AND ΕΤΟΣ = ?");
@@ -230,61 +290,127 @@ function checkLeaveBalance($pdo, $mitroo, $leave_type, $days_requested, $travel_
         
         $hours_balance = $balance_data['ΥΠΟΛΟΙΠΟ_ΟΛΙΓΟΩΡΗΣ_ΜΗΝΑΣ'];
         
-        if ($hours_balance >= $hours_requested) {
-            return ['status' => true, 'current_balance' => $hours_balance . ' ώρες (μήνας ' . date('m/Y') . ')'];
-        } else {
-            return ['status' => false, 'message' => "Ανεπαρκές υπόλοιπο ολιγόωρης άδειας. Διαθέσιμες: $hours_balance ώρες για τον μήνα " . date('m/Y')];
+        // ΔΙΠΛΟΣ ΕΛΕΓΧΟΣ: Μηνιαίο + Ημερήσιο όριο
+        if ($hours_requested > 3) {
+            $severe_warnings[] = "🔴 ΥΠΕΡΒΑΣΗ ΗΜΕΡΗΣΙΟΥ ΟΡΙΟΥ: Ζητάτε $hours_requested ώρες αλλά το ημερήσιο όριο είναι 3 ώρες";
         }
         
-    } elseif ($leave_type == 'ΣΧΟΛΙΚΗ_ΕΠΙΔΟΣΗ') {
-        $balance = $balance_data['ΥΠΟΛΟΙΠΟ_ΣΧΟΛΙΚΗΣ_ΠΟΡΕΙΑΣ'];
-        
-        if ($balance >= $days_requested) {
-            return ['status' => true, 'current_balance' => $balance];
-        } else {
-            return ['status' => false, 'message' => "Ανεπαρκές υπόλοιπο σχολικής επίδοσης. Διαθέσιμες: $balance ημέρες"];
+        if ($hours_balance < $hours_requested) {
+            $severe_warnings[] = "🔴 ΥΠΕΡΒΑΣΗ ΜΗΝΙΑΙΟΥ ΟΡΙΟΥ: Ζητάτε $hours_requested ώρες αλλά έχετε $hours_balance διαθέσιμες για τον μήνα " . date('m/Y');
         }
+        
+        return [
+            'status' => true,
+            'current_balance' => $hours_balance . ' ώρες (μήνας ' . date('m/Y') . ')',
+            'warnings' => $warnings,
+            'severe_warnings' => $severe_warnings
+        ];
+    
+    // ============================================
+    // ΚΑΤΗΓΟΡΙΑ 2: ΑΠΟ 0 → ΠΡΟΣ ΟΡΙΟ (31/12/έτος)
+    // ============================================
+    
+    } elseif ($leave_type == 'ΑΣΘΕΝΕΙΑ_ΤΕΚΝΩΝ') {
+        $max_days = 10;
+        $stmt = $pdo->prepare("SELECT COALESCE(SUM(meres), 0) as used_days FROM requests WHERE mitroo = ? AND typos = 'ΑΣΘΕΝΕΙΑ_ΤΕΚΝΩΝ' AND status IN ('ΕΓΚΡΙΘΗΚΕ', 'ΕΓΚΡΙΘΗΚΕ ΜΕ ΤΡΟΠΟΠΟΙΗΣΗ') AND YEAR(imerominia) = ?");
+        $stmt->execute([$mitroo, $current_year]);
+        $used_days = $stmt->fetchColumn();
+        $available_days = $max_days - $used_days;
+        
+        if ($available_days < $days_requested) {
+            $severe_warnings[] = "🔴 ΥΠΕΡΒΑΣΗ ΟΡΙΟΥ: Ζητάτε $days_requested ημέρες αλλά έχετε $available_days διαθέσιμες από το όριο των $max_days ημερών";
+        }
+        
+        return [
+            'status' => true,
+            'current_balance' => "$available_days διαθέσιμες (χρησιμοποιήθηκαν: $used_days από $max_days)",
+            'warnings' => $warnings,
+            'severe_warnings' => $severe_warnings
+        ];
         
     } elseif ($leave_type == 'ΕΞΕΤΑΣΕΩΝ') {
-        $balance = isset($balance_data['ΥΠΟΛΟΙΠΟ_ΕΞΕΤΑΣΕΩΝ']) ? $balance_data['ΥΠΟΛΟΙΠΟ_ΕΞΕΤΑΣΕΩΝ'] : 14;
+        $max_days = 14;
+        $stmt = $pdo->prepare("SELECT COALESCE(SUM(meres), 0) as used_days FROM requests WHERE mitroo = ? AND typos = 'ΕΞΕΤΑΣΕΩΝ' AND status IN ('ΕΓΚΡΙΘΗΚΕ', 'ΕΓΚΡΙΘΗΚΕ ΜΕ ΤΡΟΠΟΠΟΙΗΣΗ') AND YEAR(imerominia) = ?");
+        $stmt->execute([$mitroo, $current_year]);
+        $used_days = $stmt->fetchColumn();
+        $available_days = $max_days - $used_days;
         
-        if ($balance >= $days_requested) {
-            return ['status' => true, 'current_balance' => $balance];
-        } else {
-            return ['status' => false, 'message' => "Ανεπαρκές υπόλοιπο εξετάσεων. Διαθέσιμες: $balance ημέρες"];
+        if ($available_days < $days_requested) {
+            $severe_warnings[] = "🔴 ΥΠΕΡΒΑΣΗ ΟΡΙΟΥ: Ζητάτε $days_requested ημέρες αλλά έχετε $available_days διαθέσιμες από το όριο των $max_days ημερών";
         }
+        
+        return [
+            'status' => true,
+            'current_balance' => "$available_days διαθέσιμες (χρησιμοποιήθηκαν: $used_days από $max_days)",
+            'warnings' => $warnings,
+            'severe_warnings' => $severe_warnings
+        ];
         
     } elseif ($leave_type == 'ΜΕΤΑΓΓΙΣΕΙΣ_ΝΟΣΗΛΕΙΑ') {
-        $balance = isset($balance_data['ΥΠΟΛΟΙΠΟ_ΝΟΣΗΛΕΙΑΣ']) ? $balance_data['ΥΠΟΛΟΙΠΟ_ΝΟΣΗΛΕΙΑΣ'] : 22;
+        $max_days = 22;
+        $stmt = $pdo->prepare("SELECT COALESCE(SUM(meres), 0) as used_days FROM requests WHERE mitroo = ? AND typos = 'ΜΕΤΑΓΓΙΣΕΙΣ_ΝΟΣΗΛΕΙΑ' AND status IN ('ΕΓΚΡΙΘΗΚΕ', 'ΕΓΚΡΙΘΗΚΕ ΜΕ ΤΡΟΠΟΠΟΙΗΣΗ') AND YEAR(imerominia) = ?");
+        $stmt->execute([$mitroo, $current_year]);
+        $used_days = $stmt->fetchColumn();
+        $available_days = $max_days - $used_days;
         
-        if ($balance >= $days_requested) {
-            return ['status' => true, 'current_balance' => $balance];
-        } else {
-            return ['status' => false, 'message' => "Ανεπαρκές υπόλοιπο νοσηλείας. Διαθέσιμες: $balance ημέρες"];
+        if ($available_days < $days_requested) {
+            $severe_warnings[] = "🔴 ΥΠΕΡΒΑΣΗ ΟΡΙΟΥ: Ζητάτε $days_requested ημέρες αλλά έχετε $available_days διαθέσιμες από το όριο των $max_days ημερών";
         }
         
-    } elseif ($leave_type == 'ΑΣΘΕΝΕΙΑ_ΤΕΚΝΩΝ') {
-        $balance = isset($balance_data['ΥΠΟΛΟΙΠΟ_ΑΣΘΕΝΕΙΑΣ_ΤΕΚΝΩΝ']) ? $balance_data['ΥΠΟΛΟΙΠΟ_ΑΣΘΕΝΕΙΑΣ_ΤΕΚΝΩΝ'] : 10;
+        return [
+            'status' => true,
+            'current_balance' => "$available_days διαθέσιμες (χρησιμοποιήθηκαν: $used_days από $max_days)",
+            'warnings' => $warnings,
+            'severe_warnings' => $severe_warnings
+        ];
         
-        if ($balance >= $days_requested) {
-            return ['status' => true, 'current_balance' => $balance];
-        } else {
-            return ['status' => false, 'message' => "Ανεπαρκές υπόλοιπο ασθένειας τέκνων. Διαθέσιμες: $balance ημέρες"];
+    } elseif ($leave_type == 'ΣΧΟΛΙΚΗ_ΕΠΙΔΟΣΗ') {
+        $max_days = 8;
+        $stmt = $pdo->prepare("SELECT COALESCE(SUM(meres), 0) as used_days FROM requests WHERE mitroo = ? AND typos = 'ΣΧΟΛΙΚΗ_ΕΠΙΔΟΣΗ' AND status IN ('ΕΓΚΡΙΘΗΚΕ', 'ΕΓΚΡΙΘΗΚΕ ΜΕ ΤΡΟΠΟΠΟΙΗΣΗ') AND YEAR(imerominia) = ?");
+        $stmt->execute([$mitroo, $current_year]);
+        $used_days = $stmt->fetchColumn();
+        $available_days = $max_days - $used_days;
+        
+        if ($available_days < $days_requested) {
+            $severe_warnings[] = "🔴 ΥΠΕΡΒΑΣΗ ΟΡΙΟΥ: Ζητάτε $days_requested ημέρες αλλά έχετε $available_days διαθέσιμες από το όριο των $max_days ημερών";
         }
         
+        return [
+            'status' => true,
+            'current_balance' => "$available_days διαθέσιμες (χρησιμοποιήθηκαν: $used_days από $max_days)",
+            'warnings' => $warnings,
+            'severe_warnings' => $severe_warnings
+        ];
+        
+    // ΣΤΑΘΕΡΕΣ ΑΔΕΙΕΣ
     } elseif (in_array($leave_type, ['ΓΑΜΟΣ', 'ΠΕΝΘΟΣ'])) {
-        if ($days_requested == 5) {
-            return ['status' => true, 'current_balance' => '5 ημέρες (σταθερή άδεια)'];
-        } else {
-            return ['status' => false, 'message' => "Η άδεια $leave_type είναι σταθερά 5 ημέρες"];
+        if ($days_requested != 5) {
+            $warnings[] = "⚠️ ΠΡΟΣΟΧΗ: Η άδεια $leave_type είναι σταθερά 5 ημέρες";
         }
-    } elseif ($leave_type == 'ΑΙΤΗΣΗ_ΩΡΑΡΙΟΥ') {
-        return ['status' => true, 'current_balance' => 'Αίτηση για εργασία με συγκεκριμένο ωράριο - Απαιτείται έγκριση'];    
+        
+        return [
+            'status' => true,
+            'current_balance' => '5 ημέρες (σταθερή άδεια)',
+            'warnings' => $warnings,
+            'severe_warnings' => $severe_warnings
+        ];
+        
+    // ΕΙΔΙΚΕΣ ΑΔΕΙΕΣ ΧΩΡΙΣ ΠΕΡΙΟΡΙΣΜΟΥΣ
     } elseif (in_array($leave_type, ['ΑΝΑΡΡΩΤΙΚΗ', 'ΕΚΠΑΙΔΕΥΤΙΚΗ', 'ΜΑΚΡΑΣ_ΔΙΑΡΚΕΙΑΣ', 'ΣΧΟΛΙΚΗ_ΔΟΚΙΜΩΝ', 'ΜΗΤΡΟΤΗΤΑΣ', 'ΑΝΑΤΡΟΦΗΣ', 'ΙΑΤΡΙΚΗ_ΑΝΑΠΑΡΑΓΩΓΗ', 'ΕΠΙΠΡΟΣΘΕΤΗ_ΑΝΑΤΡΟΦΗΣ'])) {
-        return ['status' => true, 'current_balance' => 'Ειδικός τύπος άδειας - Απαιτείται έγκριση από προϊστάμενο'];
+        return [
+            'status' => true,
+            'current_balance' => 'Ειδικός τύπος άδειας - Απαιτείται έγκριση από προϊστάμενο',
+            'warnings' => $warnings,
+            'severe_warnings' => $severe_warnings
+        ];
         
     } else {
-        return ['status' => false, 'message' => 'Μη έγκυρος τύπος άδειας'];
+        return [
+            'status' => false,
+            'message' => 'Μη έγκυρος τύπος άδειας',
+            'warnings' => $warnings,
+            'severe_warnings' => $severe_warnings
+        ];
     }
 }
 
@@ -478,8 +604,197 @@ function testEmailSending($test_email = 'tdnagiounikolaou@astynomia.gr') {
     
     return mail($test_email, $encoded_subject, $message, $headers_string);
 }
-// Αν δεν υπάρχει βαθμός στο adeies_ypoloipa, λάβε τον από τον πίνακα users
-if (empty($balance_data['βαθμος'])) {
+// ΝΕΑ συνάρτηση για ενημέρωση υπολοίπων μετά από έγκριση αίτησης
+function updateBalanceAfterApproval($pdo, $request_data) {
+    $mitroo = $request_data['mitroo'];
+    $typos = $request_data['typos'];
+    $meres = (int)$request_data['meres'];
+    $wres = (int)$request_data['wres'];
+    $current_year = date('Y');
+    
+    // Εξαγωγή ημερών πορείας από το logos
+    $travel_days = 0;
+    if (preg_match('/Ημέρες πορείας: (\d+)/', $request_data['logos'], $matches)) {
+        $travel_days = (int)$matches[1];
+    }
+    
+    try {
+        $pdo->beginTransaction();
+        
+        // ΚΑΤΗΓΟΡΙΑ 1: ΑΦΑΙΡΕΣΗ ΑΠΟ ΣΤΑΘΕΡΟ ΑΡΙΘΜΟ
+        if ($typos == 'ΚΑΝΟΝΙΚΗ') {
+            // Αφαίρεση από κανονική άδεια (πρώτα από τρέχον έτος, μετά από προηγούμενο)
+            $stmt = $pdo->prepare("SELECT ΥΠΟΛΟΙΠΟ_ΚΑΝΟΝΙΚΗΣ, PREVIOUS_YEAR_KANONIKI, ΥΠΟΛΟΙΠΟ_ΠΟΡΕΙΑΣ_ΚΑΝΟΝΙΚΗΣ FROM adeies_ypoloipa WHERE ΜΗΤΡΩΟ = ? AND ΕΤΟΣ = ?");
+            $stmt->execute([$mitroo, $current_year]);
+            $balance = $stmt->fetch();
+            
+            $remaining_to_deduct = $meres;
+            $new_current = $balance['ΥΠΟΛΟΙΠΟ_ΚΑΝΟΝΙΚΗΣ'];
+            $new_previous = $balance['PREVIOUS_YEAR_KANONIKI'];
+            
+            // Αφαίρεση από τρέχον έτος πρώτα
+            if ($new_current >= $remaining_to_deduct) {
+                $new_current -= $remaining_to_deduct;
+            } else {
+                $remaining_to_deduct -= $new_current;
+                $new_current = 0;
+                $new_previous = max(0, $new_previous - $remaining_to_deduct);
+            }
+            
+            // Αφαίρεση πορείας (ΚΑΝΟΝΑΣ: όλα ή τίποτα)
+            $new_travel = ($travel_days > 0) ? 0 : $balance['ΥΠΟΛΟΙΠΟ_ΠΟΡΕΙΑΣ_ΚΑΝΟΝΙΚΗΣ'];
+            
+            $stmt = $pdo->prepare("UPDATE adeies_ypoloipa SET ΥΠΟΛΟΙΠΟ_ΚΑΝΟΝΙΚΗΣ = ?, PREVIOUS_YEAR_KANONIKI = ?, ΥΠΟΛΟΙΠΟ_ΠΟΡΕΙΑΣ_ΚΑΝΟΝΙΚΗΣ = ?, TELEUTAIA_ENIMEROSI = CURDATE() WHERE ΜΗΤΡΩΟ = ? AND ΕΤΟΣ = ?");
+            $stmt->execute([$new_current, $new_previous, $new_travel, $mitroo, $current_year]);
+            
+        } elseif ($typos == 'ΒΡΑΧΕΙΑ') {
+            // Αφαίρεση από βραχεία άδεια
+            $stmt = $pdo->prepare("SELECT ΥΠΟΛΟΙΠΟ_ΒΡΑΧΕΙΑΣ, PREVIOUS_YEAR_VRAHEIA, ΥΠΟΛΟΙΠΟ_ΠΟΡΕΙΑΣ_ΒΡΑΧΕΙΑΣ FROM adeies_ypoloipa WHERE ΜΗΤΡΩΟ = ? AND ΕΤΟΣ = ?");
+            $stmt->execute([$mitroo, $current_year]);
+            $balance = $stmt->fetch();
+            
+            $remaining_to_deduct = $meres;
+            $new_current = $balance['ΥΠΟΛΟΙΠΟ_ΒΡΑΧΕΙΑΣ'];
+            $new_previous = $balance['PREVIOUS_YEAR_VRAHEIA'];
+            
+            // Αφαίρεση από τρέχον έτος πρώτα
+            if ($new_current >= $remaining_to_deduct) {
+                $new_current -= $remaining_to_deduct;
+            } else {
+                $remaining_to_deduct -= $new_current;
+                $new_current = 0;
+                $new_previous = max(0, $new_previous - $remaining_to_deduct);
+            }
+            
+            // Αφαίρεση πορείας (ΚΑΝΟΝΑΣ: όλα ή τίποτα)
+            $new_travel = ($travel_days > 0) ? 0 : $balance['ΥΠΟΛΟΙΠΟ_ΠΟΡΕΙΑΣ_ΒΡΑΧΕΙΑΣ'];
+            
+            $stmt = $pdo->prepare("UPDATE adeies_ypoloipa SET ΥΠΟΛΟΙΠΟ_ΒΡΑΧΕΙΑΣ = ?, PREVIOUS_YEAR_VRAHEIA = ?, ΥΠΟΛΟΙΠΟ_ΠΟΡΕΙΑΣ_ΒΡΑΧΕΙΑΣ = ?, TELEUTAIA_ENIMEROSI = CURDATE() WHERE ΜΗΤΡΩΟ = ? AND ΕΤΟΣ = ?");
+            $stmt->execute([$new_current, $new_previous, $new_travel, $mitroo, $current_year]);
+            
+        } elseif ($typos == 'ΟΛΙΓΟΩΡΗ') {
+            // Αφαίρεση από ολιγόωρη άδεια
+            $stmt = $pdo->prepare("SELECT ΥΠΟΛΟΙΠΟ_ΟΛΙΓΟΩΡΗΣ_ΜΗΝΑΣ FROM adeies_ypoloipa WHERE ΜΗΤΡΩΟ = ? AND ΕΤΟΣ = ?");
+            $stmt->execute([$mitroo, $current_year]);
+            $balance = $stmt->fetch();
+            
+            $new_hours = max(0, $balance['ΥΠΟΛΟΙΠΟ_ΟΛΙΓΟΩΡΗΣ_ΜΗΝΑΣ'] - $wres);
+            
+            $stmt = $pdo->prepare("UPDATE adeies_ypoloipa SET ΥΠΟΛΟΙΠΟ_ΟΛΙΓΟΩΡΗΣ_ΜΗΝΑΣ = ?, TELEUTAIA_ENIMEROSI = CURDATE() WHERE ΜΗΤΡΩΟ = ? AND ΕΤΟΣ = ?");
+            $stmt->execute([$new_hours, $mitroo, $current_year]);
+        }
+        
+        // ΚΑΤΗΓΟΡΙΑ 2: ΔΕΝ ΧΡΕΙΑΖΕΤΑΙ ΕΝΗΜΕΡΩΣΗ ΥΠΟΛΟΙΠΩΝ
+        // Για ασθένεια τέκνων, εξετάσεων, νοσηλεία κλπ. δεν ενημερώνουμε τίποτα
+        // γιατί υπολογίζονται real-time από τις εγκεκριμένες αιτήσεις
+        
+        // ΕΞΑΙΡΕΣΗ: Αίτηση ειδικού ωραρίου - δεν χρειάζεται ενημέρωση
+        
+        $pdo->commit();
+        return true;
+        
+    } catch (Exception $e) {
+        $pdo->rollback();
+        error_log("Σφάλμα ενημέρωσης υπολοίπων: " . $e->getMessage());
+        return false;
+    }
+}
+
+// ΕΝΗΜΕΡΩΜΕΝΗ επεξεργασία έγκρισης αιτήσεων
+if ($action == 'approve_request' && ($_SESSION['is_manager'] || $_SESSION['is_admin'])) {
+    $request_id = $_POST['request_id'];
+    
+    // Λήψη στοιχείων αίτησης
+    $stmt = $pdo->prepare("SELECT * FROM requests WHERE id = ?");
+    $stmt->execute([$request_id]);
+    $request = $stmt->fetch();
+    
+    if ($request) {
+        // Ενημέρωση status
+        $stmt = $pdo->prepare("UPDATE requests SET status = 'ΕΓΚΡΙΘΗΚΕ' WHERE id = ?");
+        $stmt->execute([$request_id]);
+        
+        // Ενημέρωση υπολοίπων
+        if (updateBalanceAfterApproval($pdo, $request)) {
+            $success = "Η αίτηση εγκρίθηκε επιτυχώς και τα υπόλοιπα ενημερώθηκαν!";
+        } else {
+            $success = "Η αίτηση εγκρίθηκε αλλά υπήρξε πρόβλημα με την ενημέρωση των υπολοίπων.";
+        }
+    }
+}
+
+if ($action == 'approve_with_modification' && ($_SESSION['is_manager'] || $_SESSION['is_admin'])) {
+    $request_id = $_POST['request_id'];
+    $new_typos = $_POST['new_typos'];
+    $new_imerominia = $_POST['new_imerominia'];
+    $new_meres = (int)$_POST['new_meres'];
+    $new_wres = (int)$_POST['new_wres'];
+    $new_logos = $_POST['new_logos'];
+    $new_topos = $_POST['new_topos'];
+    $new_proistamenos_egkrisi = $_POST['new_proistamenos_egkrisi'];
+    $new_imeres_poreias = (int)($_POST['new_imeres_poreias'] ?? 0);
+    $modification_reason = $_POST['modification_reason'];
+    
+    // Προσθήκη ημερών πορείας στην αιτιολογία αν υπάρχουν
+    if ($new_imeres_poreias > 0) {
+        $new_logos .= " | Ημέρες πορείας: " . $new_imeres_poreias;
+    }
+    
+    // Ενημέρωση της αίτησης με τα νέα στοιχεία
+    $stmt = $pdo->prepare("UPDATE requests SET typos = ?, imerominia = ?, meres = ?, wres = ?, logos = ?, topos_dianysis = ?, proistamenos_egkrisi = ?, ora_enarxis = ?, ora_lixis = ?, status = 'ΕΓΚΡΙΘΗΚΕ ΜΕ ΤΡΟΠΟΠΟΙΗΣΗ', modification_reason = ? WHERE id = ?");
+    
+    if ($stmt->execute([
+        $new_typos, $new_imerominia, $new_meres, $new_wres, $new_logos, $new_topos, 
+        $new_proistamenos_egkrisi, $_POST['new_ora_enarxis'] ?? null, $_POST['new_ora_lixis'] ?? null,
+        $modification_reason, $request_id
+    ])) {
+        // Λήψη των ενημερωμένων στοιχείων
+        $stmt = $pdo->prepare("SELECT * FROM requests WHERE id = ?");
+        $stmt->execute([$request_id]);
+        $updated_request = $stmt->fetch();
+        
+        // Ενημέρωση υπολοίπων με τα νέα στοιχεία
+        if (updateBalanceAfterApproval($pdo, $updated_request)) {
+            $success = "Η αίτηση εγκρίθηκε με τροποποίηση επιτυχώς και τα υπόλοιπα ενημερώθηκαν!";
+        } else {
+            $success = "Η αίτηση εγκρίθηκε με τροποποίηση αλλά υπήρξε πρόβλημα με την ενημέρωση των υπολοίπων.";
+        }
+    } else {
+        $error = "Σφάλμα κατά την ενημέρωση της αίτησης.";
+    }
+}
+
+	// ΝΕΑ συνάρτηση για έλεγχο συνέπειας υπολοίπων (για debugging)
+	function checkBalanceConsistency($pdo, $mitroo, $year = null) {
+		if (!$year) $year = date('Y');
+    
+		$results = [];
+    
+    // Έλεγχος κανονικής άδειας
+    $stmt = $pdo->prepare("SELECT ΥΠΟΛΟΙΠΟ_ΚΑΝΟΝΙΚΗΣ, PREVIOUS_YEAR_KANONIKI FROM adeies_ypoloipa WHERE ΜΗΤΡΩΟ = ? AND ΕΤΟΣ = ?");
+    $stmt->execute([$mitroo, $year]);
+    $balance = $stmt->fetch();
+    
+    $stmt = $pdo->prepare("SELECT COALESCE(SUM(meres), 0) as used FROM requests WHERE mitroo = ? AND typos = 'ΚΑΝΟΝΙΚΗ' AND status IN ('ΕΓΚΡΙΘΗΚΕ', 'ΕΓΚΡΙΘΗΚΕ ΜΕ ΤΡΟΠΟΠΟΙΗΣΗ') AND YEAR(imerominia) = ?");
+    $stmt->execute([$mitroo, $year]);
+    $used = $stmt->fetchColumn();
+    
+    $initial_total = 30 + ($balance['PREVIOUS_YEAR_KANONIKI'] ?? 0);
+    $current_total = ($balance['ΥΠΟΛΟΙΠΟ_ΚΑΝΟΝΙΚΗΣ'] ?? 0) + ($balance['PREVIOUS_YEAR_KANONIKI'] ?? 0);
+    $expected_remaining = $initial_total - $used;
+    
+    $results['kanoniki'] = [
+        'initial_total' => $initial_total,
+        'used' => $used,
+        'current_total' => $current_total,
+        'expected_remaining' => $expected_remaining,
+        'consistent' => ($current_total == $expected_remaining)
+    ];
+    
+    return $results;
+	}
+	// Αν δεν υπάρχει βαθμός στο adeies_ypoloipa, λάβε τον από τον πίνακα users
+	if (empty($balance_data['βαθμος'])) {
     $stmtBathmos = $pdo->prepare("SELECT ΒΑΘΜΟΣ FROM users WHERE ΜΗΤΡΩΟ = ?");
 	if (!isset($mitroo)) {
     $mitroo = $_SESSION['user_mitroo'] ?? '';
@@ -487,7 +802,7 @@ if (empty($balance_data['βαθμος'])) {
     $stmtBathmos->execute([$mitroo]);
     $userBathmos = $stmtBathmos->fetchColumn();
     
- if ($userBathmos) {
+	if ($userBathmos) {
         // Ενημέρωσε τον πίνακα adeies_ypoloipa με τον βαθμό
         $updateBathmos = $pdo->prepare("UPDATE adeies_ypoloipa SET βαθμος = ? WHERE ΜΗΤΡΩΟ = ?");
         $updateBathmos->execute([$userBathmos, $mitroo]);
@@ -890,9 +1205,251 @@ if (isset($_POST['ajax_action'])) {
         exit();
     }
 }
+// ΝΕΟ: AJAX endpoint για real-time έλεγχο υπολοίπων
+if (isset($_GET['ajax_check_balance'])) {
+    header('Content-Type: application/json');
+    
+    $typos = $_POST['typos'] ?? '';
+    $meres = (int)($_POST['meres'] ?? 0);
+    $wres = (int)($_POST['wres'] ?? 0);
+    $imeres_poreias = (int)($_POST['imeres_poreias'] ?? 0);
+    $mitroo = $_SESSION['user_mitroo'];
+    
+    if ($typos) {
+        if ($typos == 'ΟΛΙΓΟΩΡΗ') {
+            $balance_check = checkLeaveBalance($pdo, $mitroo, $typos, 0, 0, $wres);
+        } else {
+            $balance_check = checkLeaveBalance($pdo, $mitroo, $typos, $meres, $imeres_poreias, $wres);
+        }
+        
+        echo json_encode([
+            'status' => $balance_check['status'],
+            'warnings' => $balance_check['warnings'] ?? [],
+            'severe_warnings' => $balance_check['severe_warnings'] ?? [],
+            'current_balance' => $balance_check['current_balance'] ?? ''
+        ]);
+    } else {
+        echo json_encode(['status' => true, 'warnings' => [], 'severe_warnings' => []]);
+    }
+    exit();
+}
 
-// ΕΝΗΜΕΡΩΜΕΝΗ επεξεργασία φόρμων
-if ($_POST && !isset($_POST['ajax_action'])) {
+// ΝΕΟ: Συνάρτηση για ανάλυση warnings από εκκρεμείς αιτήσεις
+function analyzeRequestWarnings($pdo, $request) {
+    $warnings = [];
+    $severe_warnings = [];
+    
+    // Έλεγχος υπολοίπων για την εκκρεμή αίτηση
+    if ($request['typos'] == 'ΟΛΙΓΟΩΡΗ') {
+        $balance_check = checkLeaveBalance($pdo, $request['mitroo'], $request['typos'], 0, 0, $request['wres']);
+    } else {
+        // Εξαγωγή ημερών πορείας από το logos αν υπάρχουν
+        $travel_days = 0;
+        if (preg_match('/Ημέρες πορείας: (\d+)/', $request['logos'], $matches)) {
+            $travel_days = (int)$matches[1];
+        }
+        $balance_check = checkLeaveBalance($pdo, $request['mitroo'], $request['typos'], $request['meres'], $travel_days, $request['wres']);
+    }
+    
+    if (!empty($balance_check['warnings'])) {
+        $warnings = $balance_check['warnings'];
+    }
+    if (!empty($balance_check['severe_warnings'])) {
+        $severe_warnings = $balance_check['severe_warnings'];
+    }
+    
+    return [
+        'warnings' => $warnings,
+        'severe_warnings' => $severe_warnings,
+        'has_issues' => !empty($warnings) || !empty($severe_warnings)
+    ];
+}
+
+// ΝΕΟ: HTML για εμφάνιση warnings στις εκκρεμείς αιτήσεις (προσθήκη στον υπάρχοντα κώδικα)
+function displayPendingRequestWithWarnings($pdo, $request) {
+    $analysis = analyzeRequestWarnings($pdo, $request);
+    $warning_class = $analysis['has_issues'] ? 'request-with-warnings' : '';
+    
+    echo "<div class='request {$warning_class}' id='request-{$request['id']}'>";
+    
+    // Εμφάνιση warnings στην κορυφή αν υπάρχουν
+    if ($analysis['has_issues']) {
+        echo "<div class='pending-request-warnings'>";
+        
+        if (!empty($analysis['severe_warnings'])) {
+            echo "<div class='pending-severe-warning'>";
+            echo "<div class='warning-title'>🔴 ΣΟΒΑΡΕΣ ΥΠΕΡΒΑΣΕΙΣ - ΑΠΑΙΤΕΙΤΑΙ ΙΔΙΑΙΤΕΡΗ ΠΡΟΣΟΧΗ</div>";
+            echo "<ul class='warning-list'>";
+            foreach ($analysis['severe_warnings'] as $warning) {
+                echo "<li>{$warning}</li>";
+            }
+            echo "</ul>";
+            echo "<div style='margin-top:10px; font-weight:bold; color:#cc0000;'>⚠️ Η έγκριση αυτής της αίτησης θα παραβιάσει τους κανονισμούς!</div>";
+            echo "</div>";
+        }
+        
+        if (!empty($analysis['warnings'])) {
+            echo "<div class='pending-warning'>";
+            echo "<div class='warning-title'>⚠️ ΕΙΔΟΠΟΙΗΣΕΙΣ</div>";
+            echo "<ul class='warning-list'>";
+            foreach ($analysis['warnings'] as $warning) {
+                echo "<li>{$warning}</li>";
+            }
+            echo "</ul>";
+            echo "</div>";
+        }
+        
+        echo "</div>";
+    }
+    
+    // Συνέχιση με τα κανονικά στοιχεία της αίτησης
+    echo "<h3>";
+    echo "👤 " . htmlspecialchars($request['ΟΝΟΜΑ'] . ' ' . $request['ΕΠΩΝΥΜΟ']);
+    echo " <small style='color: #666;'>(Μητρώο: " . htmlspecialchars($request['mitroo']) . ")</small>";
+    if ($analysis['has_issues']) {
+        echo " <span style='color: red; font-weight: bold;'>⚠️ ΠΡΟΒΛΗΜΑΤΙΚΗ ΑΙΤΗΣΗ</span>";
+    }
+    echo "</h3>";
+    
+    // Υπόλοιπα στοιχεία της αίτησης...
+    echo "<div class='request-info'>";
+    
+    echo "<div class='info-item'>";
+    echo "<div class='info-label'>📋 Τύπος Άδειας:</div>";
+    echo "<div style='color: #007bff; font-weight: bold;'>" . htmlspecialchars($request['typos']) . "</div>";
+    echo "</div>";
+    
+    echo "<div class='info-item'>";
+    echo "<div class='info-label'>📅 Ημερομηνία Έναρξης:</div>";
+    echo "<div>" . ($request['imerominia'] ? date('d/m/Y', strtotime($request['imerominia'])) : 'Δεν καθορίστηκε') . "</div>";
+    echo "</div>";
+    
+    echo "<div class='info-item'>";
+    echo "<div class='info-label'>⏰ Διάρκεια:</div>";
+    echo "<div>";
+    if ($request['meres']) {
+        echo $request['meres'] . " ημέρες";
+    } elseif ($request['wres']) {
+        echo $request['wres'] . " ώρες";
+        if ($request['ora_enarxis'] && $request['ora_lixis']) {
+            echo " (από " . $request['ora_enarxis'] . " έως " . $request['ora_lixis'] . ")";
+        }
+    } else {
+        echo "Δεν καθορίστηκε";
+    }
+    echo "</div>";
+    echo "</div>";
+    
+    echo "<div class='info-item'>";
+    echo "<div class='info-label'>📍 Τόπος Διάνυσης:</div>";
+    echo "<div>" . htmlspecialchars($request['topos_dianysis'] ?? 'Δεν αναφέρθηκε') . "</div>";
+    echo "</div>";
+    
+    echo "</div>";
+    
+    echo "<div class='info-item' style='margin: 15px 0;'>";
+    echo "<div class='info-label'>📝 Αιτιολογία:</div>";
+    echo "<div style='margin-top: 5px; line-height: 1.4;'>";
+    echo htmlspecialchars($request['logos']);
+    echo "</div>";
+    echo "</div>";
+    
+    echo "<div class='info-item'>";
+    echo "<div class='info-label'>✅ Έγκριση Προϊσταμένου Γραφείου:</div>";
+    echo "<div style='color: " . (($request['proistamenos_egkrisi'] ?? '') == 'ΝΑΙ' ? 'green' : 'red') . "; font-weight: bold;'>";
+    echo htmlspecialchars($request['proistamenos_egkrisi'] ?? 'Δεν καθορίστηκε');
+    echo "</div>";
+    echo "</div>";
+    
+    echo "<div class='info-item'>";
+    echo "<div class='info-label'>⏰ Υποβλήθηκε:</div>";
+    echo "<div>" . date('d/m/Y H:i', strtotime($request['submitted_at'])) . "</div>";
+    echo "</div>";
+    
+    // Κουμπιά ενεργειών
+    echo "<div class='actions'>";
+    echo "<button class='btn approve' onclick='processRequest({$request['id']}, \"approve\")'>";
+    echo "✅ Έγκριση";
+    echo "</button>";
+    echo "<button class='btn modify' onclick='processRequest({$request['id']}, \"modify\")'>";
+    echo "✏️ Έγκριση με Τροποποίηση";
+    echo "</button>";
+    echo "<button class='btn consult' onclick='processRequest({$request['id']}, \"consult\")'>";
+    echo "💬 Συνεννόηση";
+    echo "</button>";
+    echo "<button class='btn reject' onclick='processRequest({$request['id']}, \"reject\")'>";
+    echo "❌ Απόρριψη";
+    echo "</button>";
+    echo "</div>";
+    
+    echo "</div>";
+}
+
+	// ΝΕΟ: CSS για εκκρεμείς αιτήσεις με warnings
+	$pending_warnings_css = "
+	<style>
+	.request-with-warnings {
+    border-left: 6px solid #ff4444 !important;
+    background: #fff8f8 !important;
+		}
+
+	.pending-request-warnings {
+    margin-bottom: 20px;
+    padding: 15px;
+    background: #fff;
+    border-radius: 8px;
+    border: 2px solid #ff4444;
+	}
+
+	.pending-warning {
+    background: #ffe6e6;
+    border-left: 4px solid #ff4444;
+    padding: 10px;
+    margin: 10px 0;
+    border-radius: 4px;
+	}
+
+	.pending-severe-warning {
+    background: #ffcccc;
+    border: 2px solid #ff0000;
+    padding: 15px;
+    margin: 10px 0;
+    border-radius: 8px;
+    animation: pulse-red 2s infinite;
+	}
+
+	.pending-severe-warning .warning-title {
+    color: #cc0000;
+    font-size: 16px;
+    font-weight: bold;
+    margin-bottom: 10px;
+	}
+
+	.pending-warning .warning-title {
+    color: #cc4400;
+    font-size: 14px;
+    font-weight: bold;
+    margin-bottom: 8px;
+	}
+
+	.warning-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+	}
+
+	.warning-list li {
+    padding: 5px 0;
+    border-bottom: 1px solid rgba(0,0,0,0.1);
+	}
+
+	.warning-list li:last-child {
+    border-bottom: none;
+	}
+	</style>
+	";
+	// ΕΝΗΜΕΡΩΜΕΝΗ επεξεργασία φόρμων
+	if ($_POST && !isset($_POST['ajax_action'])) {
     $action = $_POST['action'] ?? '';
     
     if ($action == 'submit_request') {
@@ -1670,6 +2227,247 @@ $current_system_year = (int)getSystemSetting($pdo, 'current_year', date('Y'));
                 <button type="submit" class="btn">🚀 Υποβολή Αίτησης</button>
             </form>
         </div>
+		// ΝΕΟ: Κομμάτι για εμφάνιση warnings στη φόρμα υποβολής
+// Αυτό θα μπαίνει στο τμήμα επεξεργασίας της αίτησης
+
+if ($action == 'submit_request') {
+    $mitroo = $_SESSION['user_mitroo'];
+    $typos = $_POST['typos'];
+    $imerominia = $_POST['imerominia'];
+    $meres = (int)$_POST['meres'];
+    $imeres_poreias = (int)($_POST['imeres_poreias'] ?? 0);
+    $wres = (int)($_POST['wres'] ?? 0);
+    $ora_enarxis = isset($_POST['ora_enarxis']) && $_POST['ora_enarxis'] !== '' ? $_POST['ora_enarxis'] : null;
+    $ora_lixis = isset($_POST['ora_lixis']) && $_POST['ora_lixis'] !== '' ? $_POST['ora_lixis'] : null;
+    $logos = $_POST['logos'];
+    $topos_dianysis = $_POST['topos_dianysis'] ?? '';
+    $proistamenos_egkrisi = $_POST['proistamenos_egkrisi'] ?? '';
+    
+    // Έλεγχοι φόρμας
+    if (empty(trim($topos_dianysis))) {
+        $error = "Η αναγραφή του τόπου διάνυσης της άδειας είναι υποχρεωτική.";
+    }
+    
+    if (empty($proistamenos_egkrisi)) {
+        $error = "Η έγκριση από τον προϊστάμενο γραφείου είναι υποχρεωτική.";
+    }
+    
+    // ΝΕΟ: Έλεγχος υπολοίπων με warnings
+    if (!isset($error)) {
+        if ($typos == 'ΟΛΙΓΟΩΡΗ') {
+            if ($wres <= 0 || $wres > 9) {
+                $error = "Η ολιγόωρη άδεια πρέπει να είναι από 1 έως 9 ώρες.";
+            } else {
+                $balance_check = checkLeaveBalance($pdo, $mitroo, $typos, 0, 0, $wres);
+            }
+        } else {
+            $balance_check = checkLeaveBalance($pdo, $mitroo, $typos, $meres, $imeres_poreias, $wres);
+        }
+    }
+    
+    // ΝΕΟ: Εμφάνιση warnings αλλά επίτρεψη υποβολής
+    $warning_messages = [];
+    $severe_warning_messages = [];
+    
+    if (isset($balance_check)) {
+        // Συλλογή warnings
+        if (!empty($balance_check['warnings'])) {
+            $warning_messages = array_merge($warning_messages, $balance_check['warnings']);
+        }
+        if (!empty($balance_check['severe_warnings'])) {
+            $severe_warning_messages = array_merge($severe_warning_messages, $balance_check['severe_warnings']);
+        }
+        
+        // Υποβολή αίτησης (με ή χωρίς warnings)
+        if ($balance_check['status']) {
+            $selected_manager = $_POST['selected_manager'] ?? '';
+            
+            // Προσθήκη warnings στην αιτιολογία για ενημέρωση προϊσταμένου
+            $extended_logos = $logos;
+            if (!empty($severe_warning_messages)) {
+                $extended_logos .= " | ΠΡΟΣΟΧΗ ΠΡΟΪΣΤΑΜΕΝΕ: " . implode(", ", $severe_warning_messages);
+            }
+            if (!empty($warning_messages)) {
+                $extended_logos .= " | ΕΙΔΟΠΟΙΗΣΗ: " . implode(", ", $warning_messages);
+            }
+            
+            $stmt = $pdo->prepare("
+                INSERT INTO requests
+                (mitroo, typos, imerominia, wres, meres, logos, topos_dianysis, proistamenos_egkrisi, selected_manager_mitroo, ora_enarxis, ora_lixis, status, submitted_at)
+                VALUES
+                (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ΕΚΚΡΕΜΕΙ', NOW())
+            ");
+            
+            if ($imeres_poreias > 0) {
+                $extended_logos .= " | Ημέρες πορείας: " . $imeres_poreias;
+            }
+            if ($typos == 'ΟΛΙΓΟΩΡΗ') {
+                $meres = 0;
+            }
+            
+            if ($stmt->execute([$mitroo, $typos, $imerominia, $wres, $meres, $extended_logos, $topos_dianysis, $proistamenos_egkrisi, $selected_manager, $ora_enarxis, $ora_lixis])) {
+                $request_id = $pdo->lastInsertId();
+                
+                // Προσθήκη JavaScript για ήχο μετά την υποβολή
+                $play_sound_after_submit = true;
+                
+                $success_message = "Η αίτηση υποβλήθηκε επιτυχώς!";
+                
+                // Αν υπάρχουν warnings, ενημέρωσε τον χρήστη
+                if (!empty($severe_warning_messages)) {
+                    $success_message .= "<br><br>🔴 <strong>ΠΡΟΣΟΧΗ:</strong><br>" . implode("<br>", $severe_warning_messages);
+                    $success_message .= "<br><br>Η αίτησή σας θα κριθεί από τον προϊστάμενο με ιδιαίτερη προσοχή.";
+                }
+                if (!empty($warning_messages)) {
+                    $success_message .= "<br><br>⚠️ <strong>ΕΙΔΟΠΟΙΗΣΗ:</strong><br>" . implode("<br>", $warning_messages);
+                }
+                
+                if (sendManagerEmail($pdo, $request_id)) {
+                    $success_message .= "<br><br>📧 Στάλθηκε email στον προϊστάμενο!";
+                }
+                
+                $success = $success_message;
+            } else {
+                $error = "Σφάλμα κατά την υποβολή της αίτησης.";
+            }
+        } else {
+            $error = $balance_check['message'] ?? 'Σφάλμα ελέγχου υπολοίπου';
+        }
+    }
+}
+
+// ΝΕΟ: CSS για warnings
+$warning_css = "
+<style>
+.warning-box {
+    background: #fff3cd;
+    border: 2px solid #ffc107;
+    border-radius: 8px;
+    padding: 15px;
+    margin: 15px 0;
+    border-left: 6px solid #ff9800;
+}
+
+.severe-warning-box {
+    background: #f8d7da;
+    border: 2px solid #dc3545;
+    border-radius: 8px;
+    padding: 15px;
+    margin: 15px 0;
+    border-left: 6px solid #dc3545;
+    animation: pulse-red 2s infinite;
+}
+
+@keyframes pulse-red {
+    0% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.7); }
+    70% { box-shadow: 0 0 0 10px rgba(220, 53, 69, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0); }
+}
+
+.warning-title {
+    font-weight: bold;
+    font-size: 16px;
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.warning-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.warning-list li {
+    padding: 5px 0;
+    border-bottom: 1px solid rgba(0,0,0,0.1);
+}
+
+.warning-list li:last-child {
+    border-bottom: none;
+}
+
+.pending-warning {
+    background: #ffe6e6;
+    border-left: 4px solid #ff4444;
+    padding: 10px;
+    margin: 10px 0;
+    border-radius: 4px;
+}
+
+.pending-severe-warning {
+    background: #ffcccc;
+    border: 2px solid #ff0000;
+    padding: 15px;
+    margin: 10px 0;
+    border-radius: 8px;
+    animation: pulse-red 2s infinite;
+}
+</style>
+";
+
+// ΝΕΟ: JavaScript για real-time έλεγχο warnings στη φόρμα
+$warning_js = "
+	<script>
+	function checkLeaveBalanceRealTime() {
+    const typos = document.getElementById('typos').value;
+    const meres = parseInt(document.getElementById('meres').value) || 0;
+    const wres = parseInt(document.getElementById('wres').value) || 0;
+    const imeres_poreias = parseInt(document.getElementById('imeres_poreias').value) || 0;
+    
+    if (!typos) return;
+    
+    // AJAX κλήση για έλεγχο υπολοίπων
+    fetch('?ajax_check_balance=1', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: 'typos=' + encodeURIComponent(typos) + 
+              '&meres=' + meres + 
+              '&wres=' + wres + 
+              '&imeres_poreias=' + imeres_poreias
+    })
+    .then(response => response.json())
+    .then(data => {
+        const warningContainer = document.getElementById('warning-container');
+        warningContainer.innerHTML = '';
+        
+        if (data.severe_warnings && data.severe_warnings.length > 0) {
+            const severeDiv = document.createElement('div');
+            severeDiv.className = 'severe-warning-box';
+            severeDiv.innerHTML = '<div class=\"warning-title\">🔴 ΣΟΒΑΡΕΣ ΥΠΕΡΒΑΣΕΙΣ</div><ul class=\"warning-list\">' + 
+                data.severe_warnings.map(w => '<li>' + w + '</li>').join('') + 
+                '</ul><div style=\"margin-top:10px; font-weight:bold;\">Η αίτηση θα υποβληθεί αλλά θα κριθεί με ιδιαίτερη προσοχή από τον προϊστάμενο.</div>';
+            warningContainer.appendChild(severeDiv);
+        }
+        
+        if (data.warnings && data.warnings.length > 0) {
+            const warningDiv = document.createElement('div');
+            warningDiv.className = 'warning-box';
+            warningDiv.innerHTML = '<div class=\"warning-title\">⚠️ ΕΙΔΟΠΟΙΗΣΕΙΣ</div><ul class=\"warning-list\">' + 
+                data.warnings.map(w => '<li>' + w + '</li>').join('') + 
+                '</ul>';
+            warningContainer.appendChild(warningDiv);
+        }
+    })
+    .catch(error => console.error('Error:', error));
+	}
+
+		// Προσθήκη event listeners
+			document.addEventListener('DOMContentLoaded', function() {
+			const fields = ['typos', 'meres', 'wres', 'imeres_poreias'];
+				fields.forEach(fieldId => {
+			const field = document.getElementById(fieldId);
+				if (field) {
+            field.addEventListener('change', checkLeaveBalanceRealTime);
+            field.addEventListener('input', checkLeaveBalanceRealTime);
+			}
+				});
+			});
+	</script>
+	";
 
         <!-- Καρτέλα Των Αιτήσεων Μου -->
         <div id="my-requests-tab" class="tab-content">
