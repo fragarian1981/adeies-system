@@ -6,7 +6,7 @@
  * 
  * ΣΚΟΠΟΣ:
  * Προβολή και διαχείριση εκκρεμών αιτήσεων άδειας από προϊσταμένους/administrators.
- * Παρέχει δυνατότητες έγκρισης, απόρριψης και bulk operations.
+ * Παρέχει δυνατότητες έγκρισης, απόρριψης, έγκρισης με τροποποίηση, και επικοινωνίας.
  * 
  * ΔΙΚΑΙΩΜΑΤΑ ΠΡΟΣΒΑΣΗΣ:
  * - Μόνο χρήστες με ΠΡΟΙΣΤΑΜΕΝΟΣ = 1 ή ADMINISTRATOR = 1
@@ -15,9 +15,12 @@
  * 
  * ΚΥΡΙΕΣ ΛΕΙΤΟΥΡΓΙΕΣ:
  * - Προβολή εκκρεμών αιτήσεων με πλήρεις λεπτομέρειες
- * - Έγκριση/Απόρριψη μεμονωμένων αιτήσεων
+ * - ✅ Έγκριση μεμονωμένων αιτήσεων
+ * - ❌ Απόρριψη μεμονωμένων αιτήσεων  
+ * - ✅✏️ Έγκριση με τροποποίηση
+ * - 💬 Επικοινωνήστε μαζί μου
  * - Bulk operations (πολλαπλές εγκρίσεις/απορρίψεις)
- * - Προσθήκη σχολίων προϊσταμένου
+ * - Προσθήκη σχολίων και μηνυμάτων επικοινωνίας
  * - Email notifications στους υπαλλήλους
  * - Filtering και searching
  * - Export σε PDF/Excel
@@ -37,7 +40,7 @@
  * 
  * AUTHOR: Leave Management System Team
  * DATE: 2025
- * VERSION: 2.0
+ * VERSION: 2.1 - ΠΡΟΣΤΕΘΗΚΑΝ ΕΠΙΛΟΓΕΣ ΤΡΟΠΟΠΟΙΗΣΗΣ & ΕΠΙΚΟΙΝΩΝΙΑΣ
  * LAST MODIFIED: Current Date
  * ========================================================================
  */
@@ -84,7 +87,7 @@ $error = '';
 $info = '';
 
 // Φίλτρα και pagination parameters
-$filter_department = $_GET['department'] ?? 'ALL';      // Φίλτρο τμήματος
+$filter_department = $_GET['department'] ?? 'ALL';      // Φίλτρο γραφείου
 $filter_leave_type = $_GET['leave_type'] ?? 'ALL';      // Φίλτρο τύπου άδειας  
 $filter_priority = $_GET['priority'] ?? 'ALL';          // Φίλτρο προτεραιότητας
 $filter_date_from = $_GET['date_from'] ?? '';           // Φίλτρο ημερομηνίας από
@@ -132,7 +135,7 @@ if ($_POST) {
                  */
                 
                 $request_id = (int)$_POST['request_id'];
-                $manager_comments = trim($_POST['manager_comments'] ?? '');
+                $consultation_message = trim($_POST['consultation_message'] ?? '');
                 
                 try {
                     // Begin transaction για data consistency
@@ -140,7 +143,7 @@ if ($_POST) {
                     
                     // Λήψη στοιχείων αίτησης με user info
                     $request_sql = "
-                        SELECT r.*, u.ΟΝΟΜΑ, u.ΕΠΩΝΥΜΟ, u.EMAIL, u.ΤΜΗΜΑ
+                        SELECT r.*, u.ΟΝΟΜΑ, u.ΕΠΩΝΥΜΟ, u.EMAIL, u.ΓΡΑΦΕΙΟ
                         FROM requests r
                         JOIN users u ON r.mitroo = u.ΜΗΤΡΩΟ
                         WHERE r.id = ? AND r.status = 'ΕΚΚΡΕΜΕΙ'
@@ -182,11 +185,11 @@ if ($_POST) {
                         SET status = 'ΕΓΚΕΚΡΙΜΕΝΗ',
                             approved_by = ?,
                             approved_at = NOW(),
-                            manager_comments = ?
+                            consultation_message = ?
                         WHERE id = ?
                     ";
                     $update_stmt = $pdo->prepare($update_sql);
-                    $update_stmt->execute([$user_mitroo, $manager_comments, $request_id]);
+                    $update_stmt->execute([$user_mitroo, $consultation_message, $request_id]);
                     
                     // Αφαίρεση από user balance
                     updateUserBalance($pdo, $request['mitroo'], $request['typos'], $request['meres'], $request['wres']);
@@ -195,7 +198,7 @@ if ($_POST) {
                     $pdo->commit();
                     
                     // Email notification στον υπάλληλο
-                    $email_sent = sendApprovalEmail($pdo, $request_id, $manager_comments);
+                    $email_sent = sendApprovalEmail($pdo, $request_id, $consultation_message);
                     
                     // Audit trail logging
                     logManagerAction($pdo, $user_mitroo, 'APPROVE_REQUEST', [
@@ -204,7 +207,7 @@ if ($_POST) {
                         'leave_type' => $request['typos'],
                         'days' => $request['meres'],
                         'hours' => $request['wres'],
-                        'comments' => $manager_comments
+                        'comments' => $consultation_message
                     ]);
                     
                     // Success message
@@ -220,6 +223,219 @@ if ($_POST) {
                     
                     // Error logging
                     error_log("APPROVAL ERROR: " . $e->getMessage() . " - User: $user_mitroo, Request: $request_id");
+                }
+                break;
+                
+            case 'approve_with_modification':
+                /**
+                 * ================================================================
+                 * ΕΓΚΡΙΣΗ ΜΕ ΤΡΟΠΟΠΟΙΗΣΗ
+                 * ================================================================
+                 * 
+                 * ΔΙΑΔΙΚΑΣΙΑ:
+                 * 1. Validation request ID και modification data
+                 * 2. Έλεγχος υπολοίπων με τα νέα στοιχεία
+                 * 3. Update request με τροποποιημένα στοιχεία
+                 * 4. Set status σε ΕΓΚΕΚΡΙΜΕΝΗ
+                 * 5. Καταγραφή modification_reason
+                 * 6. Email notification με αλλαγές
+                 */
+                
+                $request_id = (int)$_POST['request_id'];
+                $modified_start_date = $_POST['modified_start_date'] ?? '';
+                $modified_days = (int)($_POST['modified_days'] ?? 0);
+                $modified_hours = (int)($_POST['modified_hours'] ?? 0);
+                $modification_reason = trim($_POST['modification_reason'] ?? '');
+                
+                if (empty($modification_reason)) {
+                    $error = "❌ Η αιτιολογία τροποποίησης είναι υποχρεωτική.";
+                    break;
+                }
+                
+                try {
+                    $pdo->beginTransaction();
+                    
+                    // Λήψη αρχικής αίτησης
+                    $request_sql = "
+                        SELECT r.*, u.ΟΝΟΜΑ, u.ΕΠΩΝΥΜΟ, u.EMAIL, u.ΓΡΑΦΕΙΟ
+                        FROM requests r
+                        JOIN users u ON r.mitroo = u.ΜΗΤΡΩΟ
+                        WHERE r.id = ? AND r.status = 'ΕΚΚΡΕΜΕΙ'
+                    ";
+                    
+                    if (!$is_admin) {
+                        $request_sql .= " AND r.selected_manager_mitroo = ?";
+                        $stmt = $pdo->prepare($request_sql);
+                        $stmt->execute([$request_id, $user_mitroo]);
+                    } else {
+                        $stmt = $pdo->prepare($request_sql);
+                        $stmt->execute([$request_id]);
+                    }
+                    
+                    $request = $stmt->fetch();
+                    
+                    if (!$request) {
+                        throw new Exception("Η αίτηση δεν βρέθηκε ή δεν έχετε δικαίωμα τροποποίησης.");
+                    }
+                    
+                    // Balance check με τα νέα στοιχεία
+                    $balance_check = checkLeaveBalance(
+                        $pdo, 
+                        $request['mitroo'], 
+                        $request['typos'], 
+                        $modified_days ?: $request['meres'], 
+                        0,
+                        $modified_hours ?: $request['wres']
+                    );
+                    
+                    if (!$balance_check['status']) {
+                        throw new Exception("Ανεπαρκές υπόλοιπο για τροποποιημένη αίτηση: " . $balance_check['message']);
+                    }
+                    
+                    // Update request με τροποποιήσεις
+                    $update_sql = "
+                        UPDATE requests 
+                        SET status = 'ΕΓΚΕΚΡΙΜΕΝΗ',
+                            approved_by = ?,
+                            approved_at = NOW(),
+                            imerominia = ?,
+                            meres = ?,
+                            wres = ?,
+                            modification_reason = ?,
+                            manager_response_date = NOW()
+                        WHERE id = ?
+                    ";
+                    
+                    $final_start_date = !empty($modified_start_date) ? $modified_start_date : $request['imerominia'];
+                    $final_days = $modified_days ?: $request['meres'];
+                    $final_hours = $modified_hours ?: $request['wres'];
+                    
+                    $update_stmt = $pdo->prepare($update_sql);
+                    $update_stmt->execute([
+                        $user_mitroo, 
+                        $final_start_date, 
+                        $final_days, 
+                        $final_hours, 
+                        $modification_reason, 
+                        $request_id
+                    ]);
+                    
+                    // Update user balance
+                    updateUserBalance($pdo, $request['mitroo'], $request['typos'], $final_days, $final_hours);
+                    
+                    $pdo->commit();
+                    
+                    // Email notification με αλλαγές
+                    $email_sent = sendModificationEmail($pdo, $request_id, $modification_reason, [
+                        'original_date' => $request['imerominia'],
+                        'modified_date' => $final_start_date,
+                        'original_days' => $request['meres'],
+                        'modified_days' => $final_days,
+                        'original_hours' => $request['wres'],
+                        'modified_hours' => $final_hours
+                    ]);
+                    
+                    // Audit trail
+                    logManagerAction($pdo, $user_mitroo, 'APPROVE_WITH_MODIFICATION', [
+                        'request_id' => $request_id,
+                        'employee_mitroo' => $request['mitroo'],
+                        'modifications' => [
+                            'date' => ['from' => $request['imerominia'], 'to' => $final_start_date],
+                            'days' => ['from' => $request['meres'], 'to' => $final_days],
+                            'hours' => ['from' => $request['wres'], 'to' => $final_hours]
+                        ],
+                        'reason' => $modification_reason
+                    ]);
+                    
+                    $success = "✅ Η αίτηση εγκρίθηκε με τροποποιήσεις!";
+                    if ($email_sent) {
+                        $success .= " Στάλθηκε email με τις αλλαγές.";
+                    }
+                    
+                } catch (Exception $e) {
+                    $pdo->rollback();
+                    $error = "❌ Σφάλμα κατά την έγκριση με τροποποίηση: " . $e->getMessage();
+                }
+                break;
+                
+            case 'request_consultation':
+                /**
+                 * ================================================================
+                 * ΑΙΤΗΜΑ ΕΠΙΚΟΙΝΩΝΙΑΣ ΜΕ ΥΠΑΛΛΗΛΟ
+                 * ================================================================
+                 * 
+                 * ΔΙΑΔΙΚΑΣΙΑ:
+                 * 1. Validation request ID και consultation message
+                 * 2. Update request με consultation_message
+                 * 3. Set status σε 'ΕΠΙΚΟΙΝΩΝΙΑ' (αν δεν υπάρχει, παραμένει ΕΚΚΡΕΜΕΙ)
+                 * 4. Email notification στον υπάλληλο
+                 * 5. Audit trail logging
+                 */
+                
+                $request_id = (int)$_POST['request_id'];
+                $consultation_message = trim($_POST['consultation_message_text'] ?? '');
+                
+                if (empty($consultation_message)) {
+                    $error = "❌ Το μήνυμα επικοινωνίας είναι υποχρεωτικό.";
+                    break;
+                }
+                
+                try {
+                    $pdo->beginTransaction();
+                    
+                    // Validation request ownership
+                    $request_sql = "
+                        SELECT r.*, u.ΟΝΟΜΑ, u.ΕΠΩΝΥΜΟ, u.EMAIL, u.ΓΡΑΦΕΙΟ
+                        FROM requests r
+                        JOIN users u ON r.mitroo = u.ΜΗΤΡΩΟ
+                        WHERE r.id = ? AND r.status = 'ΕΚΚΡΕΜΕΙ'
+                    ";
+                    
+                    if (!$is_admin) {
+                        $request_sql .= " AND r.selected_manager_mitroo = ?";
+                        $stmt = $pdo->prepare($request_sql);
+                        $stmt->execute([$request_id, $user_mitroo]);
+                    } else {
+                        $stmt = $pdo->prepare($request_sql);
+                        $stmt->execute([$request_id]);
+                    }
+                    
+                    $request = $stmt->fetch();
+                    
+                    if (!$request) {
+                        throw new Exception("Η αίτηση δεν βρέθηκε ή δεν έχετε δικαίωμα επικοινωνίας.");
+                    }
+                    
+                    // Update request με consultation message
+                    $update_sql = "
+                        UPDATE requests 
+                        SET consultation_message = ?,
+                            manager_response_date = NOW()
+                        WHERE id = ?
+                    ";
+                    $update_stmt = $pdo->prepare($update_sql);
+                    $update_stmt->execute([$consultation_message, $request_id]);
+                    
+                    $pdo->commit();
+                    
+                    // Email notification
+                    $email_sent = sendConsultationEmail($pdo, $request_id, $consultation_message);
+                    
+                    // Audit trail
+                    logManagerAction($pdo, $user_mitroo, 'REQUEST_CONSULTATION', [
+                        'request_id' => $request_id,
+                        'employee_mitroo' => $request['mitroo'],
+                        'message' => $consultation_message
+                    ]);
+                    
+                    $success = "💬 Το μήνυμα επικοινωνίας στάλθηκε επιτυχώς!";
+                    if ($email_sent) {
+                        $success .= " Ο υπάλληλος ειδοποιήθηκε.";
+                    }
+                    
+                } catch (Exception $e) {
+                    $pdo->rollback();
+                    $error = "❌ Σφάλμα κατά την αποστολή μηνύματος: " . $e->getMessage();
                 }
                 break;
                 
@@ -378,7 +594,7 @@ if ($_POST) {
                             SET status = 'ΕΓΚΕΚΡΙΜΕΝΗ',
                                 approved_by = ?,
                                 approved_at = NOW(),
-                                manager_comments = ?
+                                consultation_message = ?
                             WHERE id = ?
                         ";
                         $update_stmt = $pdo->prepare($update_sql);
@@ -498,7 +714,7 @@ if ($_POST) {
 $sql = "
     SELECT 
         r.*,
-        u.ΟΝΟΜΑ, u.ΕΠΩΝΥΜΟ, u.EMAIL, u.ΤΜΗΜΑ,
+        u.ΟΝΟΜΑ, u.ΕΠΩΝΥΜΟ, u.EMAIL, u.ΓΡΑΦΕΙΟ,
         m.ΟΝΟΜΑ as manager_name, m.ΕΠΩΝΥΜΟ as manager_surname,
         DATEDIFF(r.imerominia, CURDATE()) as days_until_leave
     FROM requests r
@@ -519,7 +735,7 @@ if (!$is_admin) {
 
 // Department filter
 if ($filter_department !== 'ALL') {
-    $sql .= " AND u.ΤΜΗΜΑ = ?";
+    $sql .= " AND u.ΓΡΑΦΕΙΟ = ?";
     $params[] = $filter_department;
 }
 
@@ -564,7 +780,7 @@ $allowed_sort_fields = [
     'imerominia' => 'r.imerominia', 
     'typos' => 'r.typos',
     'employee_name' => 'u.ΕΠΩΝΥΜΟ',
-    'department' => 'u.ΤΜΗΜΑ',
+    'department' => 'u.ΓΡΑΦΕΙΟ',
     'days_until' => 'days_until_leave',
     'meres' => 'r.meres'
 ];
@@ -635,7 +851,7 @@ $stats = $stats_stmt->fetch();
 
 // Departments list για filter dropdown
 $departments_sql = "
-    SELECT DISTINCT u.ΤΜΗΜΑ
+    SELECT DISTINCT u.ΓΡΑΦΕΙΟ
     FROM requests r
     JOIN users u ON r.mitroo = u.ΜΗΤΡΩΟ
     WHERE r.status = 'ΕΚΚΡΕΜΕΙ'
@@ -745,7 +961,977 @@ $csrf_token = $_SESSION['csrf_token'];
     <title>Εκκρεμείς Αιτήσεις - Σύστημα Αδειών</title>
     
     <!-- ========================================================================
-         CSS STYLES - ADVANCED MANAGEMENT INTERFACE
+         MODAL WINDOWS - APPROVE, REJECT, MODIFICATION, CONSULTATION, BULK OPERATIONS
+         ======================================================================== -->
+
+    <!-- Approve Modal -->
+    <div id="approve-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>✅ Έγκριση Αίτησης</h3>
+                <p>Προσθέστε σχόλια προϊσταμένου (προαιρετικό)</p>
+            </div>
+            <form method="POST" id="approve-form">
+                <input type="hidden" name="csrf_token" value="<?php echo $csrf_token; ?>">
+                <input type="hidden" name="action" value="approve_request">
+                <input type="hidden" name="request_id" id="approve-request-id">
+                
+                <div class="modal-body">
+                    <label for="consultation_message">💬 Σχόλια Προϊσταμένου:</label>
+                    <textarea name="consultation_message" id="consultation_message" 
+                              placeholder="Προσθέστε σχόλια για την έγκριση (προαιρετικό)"></textarea>
+                </div>
+                
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('approve-modal')">
+                        Ακύρωση
+                    </button>
+                    <button type="submit" class="btn btn-success">
+                        ✅ Έγκριση Αίτησης
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Approve with Modification Modal -->
+    <div id="approve-modification-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>✅✏️ Έγκριση με Τροποποίηση</h3>
+                <p>Εγκρίνετε την αίτηση με αλλαγές στα στοιχεία της</p>
+            </div>
+            <form method="POST" id="approve-modification-form">
+                <input type="hidden" name="csrf_token" value="<?php echo $csrf_token; ?>">
+                <input type="hidden" name="action" value="approve_with_modification">
+                <input type="hidden" name="request_id" id="modify-request-id">
+                
+                <div class="modal-body">
+                    <div class="modification-form">
+                        <div>
+                            <label for="modified_start_date">📅 Νέα Ημερομηνία Έναρξης:</label>
+                            <input type="date" name="modified_start_date" id="modified_start_date">
+                        </div>
+                        
+                        <div>
+                            <label for="modified_days">📊 Νέες Ημέρες:</label>
+                            <input type="number" name="modified_days" id="modified_days" min="1" max="30">
+                        </div>
+                        
+                        <div>
+                            <label for="modified_hours">⏰ Νέες Ώρες (για ολιγόωρη):</label>
+                            <input type="number" name="modified_hours" id="modified_hours" min="1" max="8" step="0.5">
+                        </div>
+                        
+                        <div class="full-width">
+                            <label for="modification_reason">📝 Αιτιολογία Τροποποίησης *:</label>
+                            <textarea name="modification_reason" id="modification_reason" required
+                                      placeholder="Εξηγήστε γιατί κάνετε αυτές τις αλλαγές..."></textarea>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('approve-modification-modal')">
+                        Ακύρωση
+                    </button>
+                    <button type="submit" class="btn btn-purple">
+                        ✅✏️ Έγκριση με Τροποποίηση
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Consultation Modal -->
+    <div id="consultation-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>💬 Επικοινωνήστε μαζί μου</h3>
+                <p>Στείλτε μήνυμα στον υπάλληλο για διευκρινίσεις</p>
+            </div>
+            <form method="POST" id="consultation-form">
+                <input type="hidden" name="csrf_token" value="<?php echo $csrf_token; ?>">
+                <input type="hidden" name="action" value="request_consultation">
+                <input type="hidden" name="request_id" id="consultation-request-id">
+                
+                <div class="modal-body">
+                    <label for="consultation_message_text">💬 Μήνυμα επικοινωνίας *:</label>
+                    <textarea name="consultation_message_text" id="consultation_message_text" required
+                              placeholder="Πληκτρολογήστε το μήνυμά σας προς τον υπάλληλο..."></textarea>
+                    
+                    <small style="color: #666; margin-top: 10px; display: block;">
+                        ℹ️ Ο υπάλληλος θα λάβει email με το μήνυμά σας και μπορεί να απαντήσει.
+                    </small>
+                </div>
+                
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('consultation-modal')">
+                        Ακύρωση
+                    </button>
+                    <button type="submit" class="btn btn-orange">
+                        💬 Αποστολή Μηνύματος
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Reject Modal -->
+    <div id="reject-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>❌ Απόρριψη Αίτησης</h3>
+                <p>Η αιτιολογία απόρριψης είναι υποχρεωτική</p>
+            </div>
+            <form method="POST" id="reject-form">
+                <input type="hidden" name="csrf_token" value="<?php echo $csrf_token; ?>">
+                <input type="hidden" name="action" value="reject_request">
+                <input type="hidden" name="request_id" id="reject-request-id">
+                
+                <div class="modal-body">
+                    <label for="rejection_reason">📝 Αιτιολογία Απόρριψης *:</label>
+                    <textarea name="rejection_reason" id="rejection_reason" required
+                              placeholder="Αναφέρετε τους λόγους απόρριψης της αίτησης..."></textarea>
+                </div>
+                
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('reject-modal')">
+                        Ακύρωση
+                    </button>
+                    <button type="submit" class="btn btn-danger">
+                        ❌ Απόρριψη Αίτησης
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Bulk Approve Modal -->
+    <div id="bulk-approve-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>✅ Bulk Έγκριση Αιτήσεων</h3>
+                <p>Έγκριση πολλαπλών αιτήσεων ταυτόχρονα</p>
+            </div>
+            <form method="POST" id="bulk-approve-form">
+                <input type="hidden" name="csrf_token" value="<?php echo $csrf_token; ?>">
+                <input type="hidden" name="action" value="bulk_approve">
+                <div id="bulk-approve-requests"></div>
+                
+                <div class="modal-body">
+                    <label for="bulk_comments">💬 Κοινά Σχόλια:</label>
+                    <textarea name="bulk_comments" id="bulk_comments" 
+                              placeholder="Κοινά σχόλια για όλες τις εγκρίσεις (προαιρετικό)"></textarea>
+                </div>
+                
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('bulk-approve-modal')">
+                        Ακύρωση
+                    </button>
+                    <button type="submit" class="btn btn-success">
+                        ✅ Έγκριση Όλων
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Bulk Reject Modal -->
+    <div id="bulk-reject-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>❌ Bulk Απόρριψη Αιτήσεων</h3>
+                <p>Απόρριψη πολλαπλών αιτήσεων ταυτόχρονα</p>
+            </div>
+            <form method="POST" id="bulk-reject-form">
+                <input type="hidden" name="csrf_token" value="<?php echo $csrf_token; ?>">
+                <input type="hidden" name="action" value="bulk_reject">
+                <div id="bulk-reject-requests"></div>
+                
+                <div class="modal-body">
+                    <label for="bulk_rejection_reason">📝 Κοινή Αιτιολογία Απόρριψης *:</label>
+                    <textarea name="bulk_rejection_reason" id="bulk_rejection_reason" required
+                              placeholder="Κοινή αιτιολογία για όλες τις απορρίψεις..."></textarea>
+                </div>
+                
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('bulk-reject-modal')">
+                        Ακύρωση
+                    </button>
+                    <button type="submit" class="btn btn-danger">
+                        ❌ Απόρριψη Όλων
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- ========================================================================
+         JAVASCRIPT SECTION - ADVANCED MANAGEMENT FUNCTIONALITY
+         ======================================================================== -->
+    <script>
+        /**
+         * ========================================================================
+         * PENDING REQUESTS MANAGEMENT SYSTEM - CLIENT-SIDE FUNCTIONALITY
+         * ========================================================================
+         * 
+         * ΠΕΡΙΓΡΑΦΗ:
+         * Προηγμένη JavaScript εφαρμογή για διαχείριση εκκρεμών αιτήσεων.
+         * Παρέχει real-time UI updates, bulk operations, AJAX functionality,
+         * form validation και enhanced UX features.
+         * 
+         * ΚΥΡΙΕΣ ΛΕΙΤΟΥΡΓΙΕΣ:
+         * - Bulk selection και operations
+         * - Modal management για approve/reject/modify/consultation
+         * - AJAX communications
+         * - Form validation
+         * - Keyboard shortcuts
+         * - Auto-refresh functionality
+         * - Export operations
+         * - Enhanced filtering
+         * ========================================================================
+         */
+
+        // Global variables και state management
+        let selectedRequests = new Set();
+        let autoRefreshInterval = null;
+        let lastUpdateCheck = new Date().toISOString();
+
+        /**
+         * ================================================================
+         * INITIALIZATION - ΕΚΚΙΝΗΣΗ ΕΦΑΡΜΟΓΗΣ
+         * ================================================================
+         */
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('🚀 Pending Requests Management System loaded');
+            
+            // Initialize bulk selection functionality
+            initializeBulkSelection();
+            
+            // Setup keyboard shortcuts
+            setupKeyboardShortcuts();
+            
+            // Initialize auto-refresh
+            initializeAutoRefresh();
+            
+            // Setup form validations
+            setupFormValidations();
+            
+            // Initialize tooltips
+            initializeTooltips();
+            
+            console.log(`📊 Loaded ${document.querySelectorAll('.request-row').length} pending requests`);
+            console.log(`👤 User Role: ${<?php echo $is_admin ? '"Administrator"' : '"Manager"'; ?>}`);
+        });
+
+        /**
+         * ================================================================
+         * BULK SELECTION FUNCTIONALITY
+         * ================================================================
+         * 
+         * Διαχείριση επιλογής πολλαπλών αιτήσεων για bulk operations
+         */
+        function initializeBulkSelection() {
+            // Select All checkbox functionality
+            const selectAllHeader = document.getElementById('select-all-header');
+            const selectAll = document.getElementById('select-all');
+            const requestCheckboxes = document.querySelectorAll('.request-checkbox');
+            
+            // Header select all functionality
+            if (selectAllHeader) {
+                selectAllHeader.addEventListener('change', function() {
+                    const isChecked = this.checked;
+                    requestCheckboxes.forEach(checkbox => {
+                        checkbox.checked = isChecked;
+                        updateRowSelection(checkbox.closest('tr'), isChecked);
+                        
+                        if (isChecked) {
+                            selectedRequests.add(checkbox.value);
+                        } else {
+                            selectedRequests.delete(checkbox.value);
+                        }
+                    });
+                    updateBulkActionButtons();
+                });
+            }
+
+            // Sidebar select all functionality  
+            if (selectAll) {
+                selectAll.addEventListener('change', function() {
+                    if (selectAllHeader) {
+                        selectAllHeader.checked = this.checked;
+                        selectAllHeader.dispatchEvent(new Event('change'));
+                    }
+                });
+            }
+
+            // Individual checkbox functionality
+            requestCheckboxes.forEach(checkbox => {
+                checkbox.addEventListener('change', function() {
+                    const requestId = this.value;
+                    const row = this.closest('tr');
+                    
+                    if (this.checked) {
+                        selectedRequests.add(requestId);
+                        updateRowSelection(row, true);
+                    } else {
+                        selectedRequests.delete(requestId);
+                        updateRowSelection(row, false);
+                    }
+                    
+                    // Update select all checkboxes
+                    const totalCheckboxes = requestCheckboxes.length;
+                    const checkedCheckboxes = document.querySelectorAll('.request-checkbox:checked').length;
+                    
+                    if (selectAllHeader) {
+                        selectAllHeader.checked = (checkedCheckboxes === totalCheckboxes);
+                        selectAllHeader.indeterminate = (checkedCheckboxes > 0 && checkedCheckboxes < totalCheckboxes);
+                    }
+                    
+                    if (selectAll) {
+                        selectAll.checked = (checkedCheckboxes === totalCheckboxes);
+                        selectAll.indeterminate = (checkedCheckboxes > 0 && checkedCheckboxes < totalCheckboxes);
+                    }
+                    
+                    updateBulkActionButtons();
+                });
+            });
+        }
+
+        /**
+         * Update visual selection state για table row
+         */
+        function updateRowSelection(row, isSelected) {
+            if (isSelected) {
+                row.classList.add('bulk-selected');
+            } else {
+                row.classList.remove('bulk-selected');
+            }
+        }
+
+        /**
+         * Update bulk action buttons based on selection
+         */
+        function updateBulkActionButtons() {
+            const selectedCount = selectedRequests.size;
+            const bulkApproveBtn = document.getElementById('bulk-approve-btn');
+            const bulkRejectBtn = document.getElementById('bulk-reject-btn');
+            const selectedCountSpan = document.getElementById('selected-count');
+            
+            if (selectedCountSpan) {
+                selectedCountSpan.textContent = `${selectedCount} επιλεγμένες`;
+            }
+            
+            const hasSelection = selectedCount > 0;
+            
+            if (bulkApproveBtn) {
+                bulkApproveBtn.disabled = !hasSelection;
+                bulkApproveBtn.style.opacity = hasSelection ? '1' : '0.5';
+            }
+            
+            if (bulkRejectBtn) {
+                bulkRejectBtn.disabled = !hasSelection;
+                bulkRejectBtn.style.opacity = hasSelection ? '1' : '0.5';
+            }
+        }
+
+        /**
+         * ================================================================
+         * MODAL MANAGEMENT FUNCTIONS
+         * ================================================================
+         */
+
+        /**
+         * Show approve modal για single request
+         */
+        function showApproveModal(requestId) {
+            document.getElementById('approve-request-id').value = requestId;
+            document.getElementById('consultation_message').value = '';
+            showModal('approve-modal');
+        }
+
+        /**
+         * Show approve with modification modal
+         */
+        function showApproveWithModificationModal(requestId) {
+            document.getElementById('modify-request-id').value = requestId;
+            document.getElementById('modified_start_date').value = '';
+            document.getElementById('modified_days').value = '';
+            document.getElementById('modified_hours').value = '';
+            document.getElementById('modification_reason').value = '';
+            showModal('approve-modification-modal');
+        }
+
+        /**
+         * Show consultation modal
+         */
+        function showConsultationModal(requestId) {
+            document.getElementById('consultation-request-id').value = requestId;
+            document.getElementById('consultation_message_text').value = '';
+            showModal('consultation-modal');
+        }
+
+        /**
+         * Show reject modal για single request
+         */
+        function showRejectModal(requestId) {
+            document.getElementById('reject-request-id').value = requestId;
+            document.getElementById('rejection_reason').value = '';
+            showModal('reject-modal');
+        }
+
+        /**
+         * Show bulk approve modal
+         */
+        function showBulkApproveModal() {
+            if (selectedRequests.size === 0) {
+                alert('⚠️ Παρακαλώ επιλέξτε τουλάχιστον μία αίτηση.');
+                return;
+            }
+
+            // Δημιουργία hidden inputs για επιλεγμένες αιτήσεις
+            const container = document.getElementById('bulk-approve-requests');
+            container.innerHTML = '';
+            
+            selectedRequests.forEach(requestId => {
+                const input = document.createElement('input');
+                input.type = 'hidden';
+                input.name = 'selected_requests[]';
+                input.value = requestId;
+                container.appendChild(input);
+            });
+
+            document.getElementById('bulk_comments').value = '';
+            showModal('bulk-approve-modal');
+        }
+
+        /**
+         * Show bulk reject modal
+         */
+        function showBulkRejectModal() {
+            if (selectedRequests.size === 0) {
+                alert('⚠️ Παρακαλώ επιλέξτε τουλάχιστον μία αίτηση.');
+                return;
+            }
+
+            // Δημιουργία hidden inputs για επιλεγμένες αιτήσεις
+            const container = document.getElementById('bulk-reject-requests');
+            container.innerHTML = '';
+            
+            selectedRequests.forEach(requestId => {
+                const input = document.createElement('input');
+                input.type = 'hidden';
+                input.name = 'selected_requests[]';
+                input.value = requestId;
+                container.appendChild(input);
+            });
+
+            document.getElementById('bulk_rejection_reason').value = '';
+            showModal('bulk-reject-modal');
+        }
+
+        /**
+         * Generic modal show function
+         */
+        function showModal(modalId) {
+            const modal = document.getElementById(modalId);
+            if (modal) {
+                modal.style.display = 'block';
+                document.body.style.overflow = 'hidden'; // Prevent background scrolling
+                
+                // Focus στο πρώτο input field
+                const firstInput = modal.querySelector('textarea, input[type="text"], input[type="date"]');
+                if (firstInput) {
+                    setTimeout(() => firstInput.focus(), 100);
+                }
+            }
+        }
+
+        /**
+         * Generic modal close function
+         */
+        function closeModal(modalId) {
+            const modal = document.getElementById(modalId);
+            if (modal) {
+                modal.style.display = 'none';
+                document.body.style.overflow = 'auto'; // Restore scrolling
+            }
+        }
+
+        /**
+         * Close modal when clicking outside
+         */
+        document.addEventListener('click', function(e) {
+            if (e.target.classList.contains('modal')) {
+                closeModal(e.target.id);
+            }
+        });
+
+        /**
+         * ================================================================
+         * FORM VALIDATION FUNCTIONS
+         * ================================================================
+         */
+        function setupFormValidations() {
+            // Approve form validation
+            const approveForm = document.getElementById('approve-form');
+            if (approveForm) {
+                approveForm.addEventListener('submit', function(e) {
+                    const submitBtn = this.querySelector('button[type="submit"]');
+                    if (submitBtn) {
+                        submitBtn.innerHTML = '<span class="loading"></span> Εγκρίνεται...';
+                        submitBtn.disabled = true;
+                    }
+                });
+            }
+
+            // Approve with modification form validation
+            const modifyForm = document.getElementById('approve-modification-form');
+            if (modifyForm) {
+                modifyForm.addEventListener('submit', function(e) {
+                    const reason = document.getElementById('modification_reason').value.trim();
+                    if (reason.length < 10) {
+                        e.preventDefault();
+                        alert('⚠️ Η αιτιολογία τροποποίησης πρέπει να είναι τουλάχιστον 10 χαρακτήρες.');
+                        return false;
+                    }
+
+                    const submitBtn = this.querySelector('button[type="submit"]');
+                    if (submitBtn) {
+                        submitBtn.innerHTML = '<span class="loading"></span> Εγκρίνεται με τροποποίηση...';
+                        submitBtn.disabled = true;
+                    }
+                });
+            }
+
+            // Consultation form validation
+            const consultationForm = document.getElementById('consultation-form');
+            if (consultationForm) {
+                consultationForm.addEventListener('submit', function(e) {
+                    const message = document.getElementById('consultation_message_text').value.trim();
+                    if (message.length < 5) {
+                        e.preventDefault();
+                        alert('⚠️ Το μήνυμα επικοινωνίας πρέπει να είναι τουλάχιστον 5 χαρακτήρες.');
+                        return false;
+                    }
+
+                    const submitBtn = this.querySelector('button[type="submit"]');
+                    if (submitBtn) {
+                        submitBtn.innerHTML = '<span class="loading"></span> Αποστέλλεται...';
+                        submitBtn.disabled = true;
+                    }
+                });
+            }
+
+            // Reject form validation
+            const rejectForm = document.getElementById('reject-form');
+            if (rejectForm) {
+                rejectForm.addEventListener('submit', function(e) {
+                    const reason = document.getElementById('rejection_reason').value.trim();
+                    if (reason.length < 10) {
+                        e.preventDefault();
+                        alert('⚠️ Η αιτιολογία απόρριψης πρέπει να είναι τουλάχιστον 10 χαρακτήρες.');
+                        return false;
+                    }
+
+                    const submitBtn = this.querySelector('button[type="submit"]');
+                    if (submitBtn) {
+                        submitBtn.innerHTML = '<span class="loading"></span> Απορρίπτεται...';
+                        submitBtn.disabled = true;
+                    }
+                });
+            }
+
+            // Bulk approve form validation
+            const bulkApproveForm = document.getElementById('bulk-approve-form');
+            if (bulkApproveForm) {
+                bulkApproveForm.addEventListener('submit', function(e) {
+                    if (!confirm(`⚠️ ΠΡΟΣΟΧΗ!\n\nΘα εγκριθούν ${selectedRequests.size} αιτήσεις.\nΕίστε σίγουροι;`)) {
+                        e.preventDefault();
+                        return false;
+                    }
+
+                    const submitBtn = this.querySelector('button[type="submit"]');
+                    if (submitBtn) {
+                        submitBtn.innerHTML = '<span class="loading"></span> Εγκρίνονται...';
+                        submitBtn.disabled = true;
+                    }
+                });
+            }
+
+            // Bulk reject form validation
+            const bulkRejectForm = document.getElementById('bulk-reject-form');
+            if (bulkRejectForm) {
+                bulkRejectForm.addEventListener('submit', function(e) {
+                    const reason = document.getElementById('bulk_rejection_reason').value.trim();
+                    if (reason.length < 10) {
+                        e.preventDefault();
+                        alert('⚠️ Η αιτιολογία bulk απόρριψης πρέπει να είναι τουλάχιστον 10 χαρακτήρες.');
+                        return false;
+                    }
+
+                    if (!confirm(`⚠️ ΠΡΟΣΟΧΗ!\n\nΘα απορριφθούν ${selectedRequests.size} αιτήσεις.\nΕίστε σίγουροι;`)) {
+                        e.preventDefault();
+                        return false;
+                    }
+
+                    const submitBtn = this.querySelector('button[type="submit"]');
+                    if (submitBtn) {
+                        submitBtn.innerHTML = '<span class="loading"></span> Απορρίπτονται...';
+                        submitBtn.disabled = true;
+                    }
+                });
+            }
+        }
+
+        /**
+         * ================================================================
+         * FILTERING AND SEARCH FUNCTIONALITY
+         * ================================================================
+         */
+
+        /**
+         * Apply filters and reload page
+         */
+        function applyFilters() {
+            // Reset page to 1 when applying filters
+            document.querySelector('input[name="page"]').value = 1;
+            document.getElementById('filters-form').submit();
+        }
+
+        /**
+         * Clear all filters
+         */
+        function clearAllFilters() {
+            const form = document.getElementById('filters-form');
+            const selects = form.querySelectorAll('select');
+            const inputs = form.querySelectorAll('input[type="date"]');
+            
+            selects.forEach(select => {
+                if (select.name !== 'sort' && select.name !== 'order') {
+                    select.value = 'ALL';
+                } else if (select.name === 'sort') {
+                    select.value = 'submitted_at';
+                } else if (select.name === 'order') {
+                    select.value = 'ASC';
+                }
+            });
+
+            inputs.forEach(input => {
+                input.value = '';
+            });
+
+            applyFilters();
+        }
+
+        /**
+         * ================================================================
+         * REQUEST DETAILS FUNCTIONALITY
+         * ================================================================
+         */
+
+        /**
+         * View detailed request information
+         */
+        function viewRequestDetails(requestId) {
+            // Create popup window με request details
+            const popup = window.open(
+                `request-details.php?id=${requestId}&mode=popup`, 
+                'RequestDetails',
+                'width=800,height=700,scrollbars=yes,resizable=yes,toolbar=no,menubar=no'
+            );
+            
+            if (!popup) {
+                // Fallback: Navigate to details page in same window
+                window.open(`request-details.php?id=${requestId}`, '_blank');
+            }
+        }
+
+        /**
+         * ================================================================
+         * AUTO-REFRESH FUNCTIONALITY
+         * ================================================================
+         */
+        function initializeAutoRefresh() {
+            // Auto-refresh κάθε 60 δευτερόλεπτα για real-time updates
+            autoRefreshInterval = setInterval(checkForUpdates, 60000);
+            
+            // Check for visibility change to pause/resume auto-refresh
+            document.addEventListener('visibilitychange', function() {
+                if (document.hidden) {
+                    if (autoRefreshInterval) {
+                        clearInterval(autoRefreshInterval);
+                        autoRefreshInterval = null;
+                    }
+                } else {
+                    if (!autoRefreshInterval) {
+                        autoRefreshInterval = setInterval(checkForUpdates, 60000);
+                    }
+                }
+            });
+        }
+
+        /**
+         * Check for new updates via AJAX
+         */
+        function checkForUpdates() {
+            fetch('ajax/check-pending-updates.php', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    last_check: lastUpdateCheck,
+                    current_filters: getCurrentFilters()
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.has_updates) {
+                    showUpdateNotification(data.update_count);
+                }
+                lastUpdateCheck = new Date().toISOString();
+            })
+            .catch(error => {
+                console.log('Update check failed:', error);
+            });
+        }
+
+        /**
+         * Get current filter state
+         */
+        function getCurrentFilters() {
+            const form = document.getElementById('filters-form');
+            const formData = new FormData(form);
+            const filters = {};
+            
+            for (let [key, value] of formData.entries()) {
+                filters[key] = value;
+            }
+            
+            return filters;
+        }
+
+        /**
+         * Show notification για updates
+         */
+        function showUpdateNotification(updateCount) {
+            const notification = document.createElement('div');
+            notification.className = 'alert alert-info';
+            notification.style.position = 'fixed';
+            notification.style.top = '20px';
+            notification.style.right = '20px';
+            notification.style.zIndex = '9999';
+            notification.style.maxWidth = '350px';
+            notification.innerHTML = `
+                <strong>🔄 Νέες ενημερώσεις!</strong><br>
+                ${updateCount} νέες αλλαγές στις εκκρεμείς αιτήσεις.
+                <br>
+                <button onclick="location.reload()" class="btn btn-sm btn-primary" style="margin-top: 8px;">
+                    🔄 Ανανέωση
+                </button>
+                <button onclick="this.parentElement.remove()" class="btn btn-sm btn-secondary" style="margin-top: 8px; margin-left: 5px;">
+                    ✕ Κλείσιμο
+                </button>
+            `;
+
+            document.body.appendChild(notification);
+
+            // Auto-remove μετά από 15 δευτερόλεπτα
+            setTimeout(() => {
+                if (notification.parentElement) {
+                    notification.remove();
+                }
+            }, 15000);
+        }
+
+        /**
+         * ================================================================
+         * KEYBOARD SHORTCUTS
+         * ================================================================
+         */
+        function setupKeyboardShortcuts() {
+            document.addEventListener('keydown', function(e) {
+                // Ctrl+A: Select/Deselect All
+                if (e.ctrlKey && e.key === 'a' && !e.target.matches('input, textarea')) {
+                    e.preventDefault();
+                    const selectAllHeader = document.getElementById('select-all-header');
+                    if (selectAllHeader) {
+                        selectAllHeader.checked = !selectAllHeader.checked;
+                        selectAllHeader.dispatchEvent(new Event('change'));
+                    }
+                }
+
+                // Ctrl+E: Bulk Approve (if items selected)
+                if (e.ctrlKey && e.key === 'e') {
+                    e.preventDefault();
+                    if (selectedRequests.size > 0) {
+                        showBulkApproveModal();
+                    }
+                }
+
+                // Ctrl+R: Bulk Reject (if items selected)
+                if (e.ctrlKey && e.key === 'r') {
+                    e.preventDefault();
+                    if (selectedRequests.size > 0) {
+                        showBulkRejectModal();
+                    }
+                }
+
+                // Escape: Close modals or clear selections
+                if (e.key === 'Escape') {
+                    // Close any open modals
+                    const openModals = document.querySelectorAll('.modal[style*="block"]');
+                    openModals.forEach(modal => {
+                        closeModal(modal.id);
+                    });
+
+                    // If no modals, clear selections
+                    if (openModals.length === 0 && selectedRequests.size > 0) {
+                        const selectAllHeader = document.getElementById('select-all-header');
+                        if (selectAllHeader) {
+                            selectAllHeader.checked = false;
+                            selectAllHeader.dispatchEvent(new Event('change'));
+                        }
+                    }
+                }
+            });
+        }
+
+        /**
+         * ================================================================
+         * EXPORT FUNCTIONALITY
+         * ================================================================
+         */
+
+        /**
+         * Export requests to PDF or Excel
+         */
+        function exportRequests(format) {
+            const currentFilters = getCurrentFilters();
+            currentFilters.export = format;
+            currentFilters.selected_only = selectedRequests.size > 0 ? 'true' : 'false';
+            
+            if (selectedRequests.size > 0) {
+                currentFilters.selected_requests = Array.from(selectedRequests);
+            }
+            
+            // Create temporary form για export
+            const form = document.createElement('form');
+            form.method = 'POST';
+            form.action = 'export-pending-requests.php';
+            form.target = '_blank';
+            form.style.display = 'none';
+
+            // Add CSRF token
+            const csrfInput = document.createElement('input');
+            csrfInput.type = 'hidden';
+            csrfInput.name = 'csrf_token';
+            csrfInput.value = '<?php echo $csrf_token; ?>';
+            form.appendChild(csrfInput);
+
+            // Add filters as hidden inputs
+            for (const [key, value] of Object.entries(currentFilters)) {
+                if (Array.isArray(value)) {
+                    value.forEach(v => {
+                        const input = document.createElement('input');
+                        input.type = 'hidden';
+                        input.name = key + '[]';
+                        input.value = v;
+                        form.appendChild(input);
+                    });
+                } else {
+                    const input = document.createElement('input');
+                    input.type = 'hidden';
+                    input.name = key;
+                    input.value = value;
+                    form.appendChild(input);
+                }
+            }
+
+            document.body.appendChild(form);
+            form.submit();
+            document.body.removeChild(form);
+
+            // Show feedback message
+            showTemporaryMessage(
+                `📄 Export ${format.toUpperCase()} ξεκίνησε...`,
+                'info',
+                3000
+            );
+        }
+
+        /**
+         * ================================================================
+         * UTILITY FUNCTIONS
+         * ================================================================
+         */
+
+        /**
+         * Initialize tooltips
+         */
+        function initializeTooltips() {
+            const tooltipElements = document.querySelectorAll('[data-tooltip]');
+            tooltipElements.forEach(element => {
+                // Enhanced tooltip functionality could be added here
+                element.addEventListener('mouseenter', function() {
+                    // Custom tooltip implementation
+                });
+            });
+        }
+
+        /**
+         * Show temporary message
+         */
+        function showTemporaryMessage(message, type = 'info', duration = 5000) {
+            const alert = document.createElement('div');
+            alert.className = `alert alert-${type}`;
+            alert.style.position = 'fixed';
+            alert.style.top = '20px';
+            alert.style.left = '50%';
+            alert.style.transform = 'translateX(-50%)';
+            alert.style.zIndex = '9999';
+            alert.style.minWidth = '300px';
+            alert.style.textAlign = 'center';
+            alert.innerHTML = message;
+
+            document.body.appendChild(alert);
+
+            setTimeout(() => {
+                if (alert.parentElement) {
+                    alert.style.opacity = '0';
+                    alert.style.transition = 'opacity 0.5s ease';
+                    setTimeout(() => alert.remove(), 500);
+                }
+            }, duration);
+        }
+
+        /**
+         * Development shortcuts στο console
+         */
+        console.log(`
+🎯 KEYBOARD SHORTCUTS:
+- Ctrl+A: Select/Deselect All Requests
+- Ctrl+E: Bulk Approve (if selected)
+- Ctrl+R: Bulk Reject (if selected)  
+- Escape: Close modals or clear selections
+- F5: Refresh page
+
+🔧 ΝΕΕΣ ΛΕΙΤΟΥΡΓΙΕΣ:
+- ✅✏️ Έγκριση με Τροποποίηση
+- 💬 Επικοινωνήστε μαζί μου
+
+📊 CURRENT PAGE STATS:
+- Total Pending: <?php echo $stats['total_pending'] ?? 0; ?>
+- Urgent Requests: <?php echo $stats['urgent'] ?? 0; ?>
+- Current Page: <?php echo $page; ?>/<?php echo $total_pages; ?>
+- User Role: <?php echo $is_admin ? 'Administrator' : 'Manager'; ?>
+        `);
+
+    </script>
+</body>
+</html>CSS STYLES - ADVANCED MANAGEMENT INTERFACE
          ======================================================================== -->
     <style>
         /* === ΒΑΣΙΚΕΣ ΡΥΘΜΙΣΕΙΣ === */
@@ -1020,22 +2206,22 @@ $csrf_token = $_SESSION['csrf_token'];
         /* === ACTION BUTTONS === */
         .action-buttons {
             display: flex;
-            gap: 8px;
+            gap: 5px;
             flex-wrap: wrap;
         }
         
         .btn {
-            padding: 8px 16px;
+            padding: 6px 12px;
             border: none;
             border-radius: 6px;
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             font-weight: 500;
             cursor: pointer;
             text-decoration: none;
             transition: all 0.3s ease;
             display: inline-flex;
             align-items: center;
-            gap: 5px;
+            gap: 3px;
             text-align: center;
         }
         
@@ -1048,6 +2234,8 @@ $csrf_token = $_SESSION['csrf_token'];
         .btn-warning { background: #ffc107; color: #212529; }
         .btn-secondary { background: #6c757d; color: white; }
         .btn-primary { background: #007bff; color: white; }
+        .btn-purple { background: #7b3ff2; color: white; }
+        .btn-orange { background: #fd7e14; color: white; }
         
         .btn:hover { 
             transform: translateY(-1px); 
@@ -1087,7 +2275,7 @@ $csrf_token = $_SESSION['csrf_token'];
             background: white;
             padding: 30px;
             border-radius: 12px;
-            max-width: 500px;
+            max-width: 600px;
             width: 90%;
             max-height: 80vh;
             overflow-y: auto;
@@ -1104,7 +2292,8 @@ $csrf_token = $_SESSION['csrf_token'];
             margin-bottom: 5px;
         }
         
-        .modal-body textarea {
+        .modal-body textarea,
+        .modal-body input {
             width: 100%;
             padding: 12px;
             border: 2px solid #e9ecef;
@@ -1112,6 +2301,31 @@ $csrf_token = $_SESSION['csrf_token'];
             resize: vertical;
             min-height: 100px;
             font-family: inherit;
+            margin-bottom: 15px;
+        }
+        
+        .modal-body label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #555;
+        }
+        
+        .modal-body input[type="date"],
+        .modal-body input[type="number"] {
+            min-height: auto;
+            height: 45px;
+        }
+        
+        .modification-form {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+        
+        .modification-form .full-width {
+            grid-column: 1 / -1;
         }
         
         .modal-footer {
@@ -1219,6 +2433,10 @@ $csrf_token = $_SESSION['csrf_token'];
             .btn {
                 justify-content: center;
                 width: 100%;
+            }
+            
+            .modification-form {
+                grid-template-columns: 1fr;
             }
         }
         
@@ -1398,10 +2616,10 @@ $csrf_token = $_SESSION['csrf_token'];
                 <div class="filters-row">
                     <!-- Department Filter -->
                     <div class="filter-group">
-                        <label for="department">🏢 Τμήμα:</label>
+                        <label for="department">🏢 Γραφείο:</label>
                         <select name="department" id="department" onchange="applyFilters()">
                             <option value="ALL" <?php echo $filter_department === 'ALL' ? 'selected' : ''; ?>>
-                                Όλα τα τμήματα
+                                Όλα τα γραφεία
                             </option>
                             <?php foreach ($departments as $dept): ?>
                                 <option value="<?php echo htmlspecialchars($dept); ?>" 
@@ -1481,7 +2699,7 @@ $csrf_token = $_SESSION['csrf_token'];
                                 Όνομα Υπαλλήλου
                             </option>
                             <option value="department" <?php echo $sort_by === 'department' ? 'selected' : ''; ?>>
-                                Τμήμα
+                                Γραφείο
                             </option>
                             <option value="typos" <?php echo $sort_by === 'typos' ? 'selected' : ''; ?>>
                                 Τύπος Άδειας
@@ -1594,7 +2812,7 @@ $csrf_token = $_SESSION['csrf_token'];
                                         <div class="employee-details">
                                             <strong><?php echo htmlspecialchars($request['ΟΝΟΜΑ'] . ' ' . $request['ΕΠΩΝΥΜΟ']); ?></strong>
                                             <small>
-                                                <?php echo htmlspecialchars($request['ΤΜΗΜΑ']); ?> | 
+                                                <?php echo htmlspecialchars($request['ΓΡΑΦΕΙΟ']); ?> | 
                                                 Μητρώο: <?php echo htmlspecialchars($request['mitroo']); ?>
                                             </small>
                                         </div>
@@ -1695,6 +2913,20 @@ $csrf_token = $_SESSION['csrf_token'];
                                             ✅ Έγκριση
                                         </button>
 
+                                        <!-- Approve with Modification -->
+                                        <button type="button" class="btn btn-purple btn-xs" 
+                                                onclick="showApproveWithModificationModal(<?php echo $request['id']; ?>)"
+                                                title="Έγκριση με τροποποίηση">
+                                            ✅✏️ Τροποποίηση
+                                        </button>
+
+                                        <!-- Request Consultation -->
+                                        <button type="button" class="btn btn-orange btn-xs" 
+                                                onclick="showConsultationModal(<?php echo $request['id']; ?>)"
+                                                title="Επικοινωνήστε μαζί μου">
+                                            💬 Επικοινωνία
+                                        </button>
+
                                         <!-- Reject -->
                                         <button type="button" class="btn btn-danger btn-xs" 
                                                 onclick="showRejectModal(<?php echo $request['id']; ?>)"
@@ -1770,1186 +3002,3 @@ $csrf_token = $_SESSION['csrf_token'];
     </div>
 
     <!-- ========================================================================
-         MODAL WINDOWS - APPROVE, REJECT, BULK OPERATIONS
-         ======================================================================== -->
-
-    <!-- Approve Modal -->
-    <div id="approve-modal" class="modal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3>✅ Έγκριση Αίτησης</h3>
-                <p>Προσθέστε σχόλια προϊσταμένου (προαιρετικό)</p>
-            </div>
-            <form method="POST" id="approve-form">
-                <input type="hidden" name="csrf_token" value="<?php echo $csrf_token; ?>">
-                <input type="hidden" name="action" value="approve_request">
-                <input type="hidden" name="request_id" id="approve-request-id">
-                
-                <div class="modal-body">
-                    <label for="manager_comments">💬 Σχόλια Προϊσταμένου:</label>
-                    <textarea name="manager_comments" id="manager_comments" 
-                              placeholder="Προσθέστε σχόλια για την έγκριση (προαιρετικό)"></textarea>
-                </div>
-                
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" onclick="closeModal('approve-modal')">
-                        Ακύρωση
-                    </button>
-                    <button type="submit" class="btn btn-success">
-                        ✅ Έγκριση Αίτησης
-                    </button>
-                </div>
-            </form>
-        </div>
-    </div>
-
-    <!-- Reject Modal -->
-    <div id="reject-modal" class="modal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3>❌ Απόρριψη Αίτησης</h3>
-                <p>Η αιτιολογία απόρριψης είναι υποχρεωτική</p>
-            </div>
-            <form method="POST" id="reject-form">
-                <input type="hidden" name="csrf_token" value="<?php echo $csrf_token; ?>">
-                <input type="hidden" name="action" value="reject_request">
-                <input type="hidden" name="request_id" id="reject-request-id">
-                
-                <div class="modal-body">
-                    <label for="rejection_reason">📝 Αιτιολογία Απόρριψης *:</label>
-                    <textarea name="rejection_reason" id="rejection_reason" required
-                              placeholder="Αναφέρετε τους λόγους απόρριψης της αίτησης..."></textarea>
-                </div>
-                
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" onclick="closeModal('reject-modal')">
-                        Ακύρωση
-                    </button>
-                    <button type="submit" class="btn btn-danger">
-                        ❌ Απόρριψη Αίτησης
-                    </button>
-                </div>
-            </form>
-        </div>
-    </div>
-
-    <!-- Bulk Approve Modal -->
-    <div id="bulk-approve-modal" class="modal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3>✅ Bulk Έγκριση Αιτήσεων</h3>
-                <p>Έγκριση πολλαπλών αιτήσεων ταυτόχρονα</p>
-            </div>
-            <form method="POST" id="bulk-approve-form">
-                <input type="hidden" name="csrf_token" value="<?php echo $csrf_token; ?>">
-                <input type="hidden" name="action" value="bulk_approve">
-                <div id="bulk-approve-requests"></div>
-                
-                <div class="modal-body">
-                    <label for="bulk_comments">💬 Κοινά Σχόλια:</label>
-                    <textarea name="bulk_comments" id="bulk_comments" 
-                              placeholder="Κοινά σχόλια για όλες τις εγκρίσεις (προαιρετικό)"></textarea>
-                </div>
-                
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" onclick="closeModal('bulk-approve-modal')">
-                        Ακύρωση
-                    </button>
-                    <button type="submit" class="btn btn-success">
-                        ✅ Έγκριση Όλων
-                    </button>
-                </div>
-            </form>
-        </div>
-    </div>
-
-    <!-- Bulk Reject Modal -->
-    <div id="bulk-reject-modal" class="modal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3>❌ Bulk Απόρριψη Αιτήσεων</h3>
-                <p>Απόρριψη πολλαπλών αιτήσεων ταυτόχρονα</p>
-            </div>
-            <form method="POST" id="bulk-reject-form">
-                <input type="hidden" name="csrf_token" value="<?php echo $csrf_token; ?>">
-                <input type="hidden" name="action" value="bulk_reject">
-                <div id="bulk-reject-requests"></div>
-                
-                <div class="modal-body">
-                    <label for="bulk_rejection_reason">📝 Κοινή Αιτιολογία Απόρριψης *:</label>
-                    <textarea name="bulk_rejection_reason" id="bulk_rejection_reason" required
-                              placeholder="Κοινή αιτιολογία για όλες τις απορρίψεις..."></textarea>
-                </div>
-                
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" onclick="closeModal('bulk-reject-modal')">
-                        Ακύρωση
-                    </button>
-                    <button type="submit" class="btn btn-danger">
-                        ❌ Απόρριψη Όλων
-                    </button>
-                </div>
-            </form>
-        </div>
-    </div>
-
-    <!-- ========================================================================
-         JAVASCRIPT SECTION - ADVANCED MANAGEMENT FUNCTIONALITY
-         ======================================================================== -->
-    <script>
-        /**
-         * ========================================================================
-         * PENDING REQUESTS MANAGEMENT SYSTEM - CLIENT-SIDE FUNCTIONALITY
-         * ========================================================================
-         * 
-         * ΠΕΡΙΓΡΑΦΗ:
-         * Προηγμένη JavaScript εφαρμογή για διαχείριση εκκρεμών αιτήσεων.
-         * Παρέχει real-time UI updates, bulk operations, AJAX functionality,
-         * form validation και enhanced UX features.
-         * 
-         * ΚΥΡΙΕΣ ΛΕΙΤΟΥΡΓΙΕΣ:
-         * - Bulk selection και operations
-         * - Modal management για approve/reject
-         * - AJAX communications
-         * - Form validation
-         * - Keyboard shortcuts
-         * - Auto-refresh functionality
-         * - Export operations
-         * - Enhanced filtering
-         * ========================================================================
-         */
-
-        // Global variables και state management
-        let selectedRequests = new Set();
-        let autoRefreshInterval = null;
-        let lastUpdateCheck = new Date().toISOString();
-
-        /**
-         * ================================================================
-         * INITIALIZATION - ΕΚΚΙΝΗΣΗ ΕΦΑΡΜΟΓΗΣ
-         * ================================================================
-         */
-        document.addEventListener('DOMContentLoaded', function() {
-            console.log('🚀 Pending Requests Management System loaded');
-            
-            // Initialize bulk selection functionality
-            initializeBulkSelection();
-            
-            // Setup keyboard shortcuts
-            setupKeyboardShortcuts();
-            
-            // Initialize auto-refresh
-            initializeAutoRefresh();
-            
-            // Setup form validations
-            setupFormValidations();
-            
-            // Initialize tooltips
-            initializeTooltips();
-            
-            console.log(`📊 Loaded ${document.querySelectorAll('.request-row').length} pending requests`);
-            console.log(`👤 User Role: ${<?php echo $is_admin ? '"Administrator"' : '"Manager"'; ?>}`);
-        });
-
-        /**
-         * ================================================================
-         * BULK SELECTION FUNCTIONALITY
-         * ================================================================
-         * 
-         * Διαχείριση επιλογής πολλαπλών αιτήσεων για bulk operations
-         */
-        function initializeBulkSelection() {
-            // Select All checkbox functionality
-            const selectAllHeader = document.getElementById('select-all-header');
-            const selectAll = document.getElementById('select-all');
-            const requestCheckboxes = document.querySelectorAll('.request-checkbox');
-            
-            // Header select all functionality
-            if (selectAllHeader) {
-                selectAllHeader.addEventListener('change', function() {
-                    const isChecked = this.checked;
-                    requestCheckboxes.forEach(checkbox => {
-                        checkbox.checked = isChecked;
-                        updateRowSelection(checkbox.closest('tr'), isChecked);
-                        
-                        if (isChecked) {
-                            selectedRequests.add(checkbox.value);
-                        } else {
-                            selectedRequests.delete(checkbox.value);
-                        }
-                    });
-                    updateBulkActionButtons();
-                });
-            }
-
-            // Sidebar select all functionality  
-            if (selectAll) {
-                selectAll.addEventListener('change', function() {
-                    if (selectAllHeader) {
-                        selectAllHeader.checked = this.checked;
-                        selectAllHeader.dispatchEvent(new Event('change'));
-                    }
-                });
-            }
-
-            // Individual checkbox functionality
-            requestCheckboxes.forEach(checkbox => {
-                checkbox.addEventListener('change', function() {
-                    const requestId = this.value;
-                    const row = this.closest('tr');
-                    
-                    if (this.checked) {
-                        selectedRequests.add(requestId);
-                        updateRowSelection(row, true);
-                    } else {
-                        selectedRequests.delete(requestId);
-                        updateRowSelection(row, false);
-                    }
-                    
-                    // Update select all checkboxes
-                    const totalCheckboxes = requestCheckboxes.length;
-                    const checkedCheckboxes = document.querySelectorAll('.request-checkbox:checked').length;
-                    
-                    if (selectAllHeader) {
-                        selectAllHeader.checked = (checkedCheckboxes === totalCheckboxes);
-                        selectAllHeader.indeterminate = (checkedCheckboxes > 0 && checkedCheckboxes < totalCheckboxes);
-                    }
-                    
-                    if (selectAll) {
-                        selectAll.checked = (checkedCheckboxes === totalCheckboxes);
-                        selectAll.indeterminate = (checkedCheckboxes > 0 && checkedCheckboxes < totalCheckboxes);
-                    }
-                    
-                    updateBulkActionButtons();
-                });
-            });
-        }
-
-        /**
-         * Update visual selection state για table row
-         */
-        function updateRowSelection(row, isSelected) {
-            if (isSelected) {
-                row.classList.add('bulk-selected');
-            } else {
-                row.classList.remove('bulk-selected');
-            }
-        }
-
-        /**
-         * Update bulk action buttons based on selection
-         */
-        function updateBulkActionButtons() {
-            const selectedCount = selectedRequests.size;
-            const bulkApproveBtn = document.getElementById('bulk-approve-btn');
-            const bulkRejectBtn = document.getElementById('bulk-reject-btn');
-            const selectedCountSpan = document.getElementById('selected-count');
-            
-            if (selectedCountSpan) {
-                selectedCountSpan.textContent = `${selectedCount} επιλεγμένες`;
-            }
-            
-            const hasSelection = selectedCount > 0;
-            
-            if (bulkApproveBtn) {
-                bulkApproveBtn.disabled = !hasSelection;
-                bulkApproveBtn.style.opacity = hasSelection ? '1' : '0.5';
-            }
-            
-            if (bulkRejectBtn) {
-                bulkRejectBtn.disabled = !hasSelection;
-                bulkRejectBtn.style.opacity = hasSelection ? '1' : '0.5';
-            }
-        }
-
-        /**
-         * ================================================================
-         * MODAL MANAGEMENT FUNCTIONS
-         * ================================================================
-         */
-
-        /**
-         * Show approve modal για single request
-         */
-        function showApproveModal(requestId) {
-            document.getElementById('approve-request-id').value = requestId;
-            document.getElementById('manager_comments').value = '';
-            showModal('approve-modal');
-        }
-
-        /**
-         * Show reject modal για single request
-         */
-        function showRejectModal(requestId) {
-            document.getElementById('reject-request-id').value = requestId;
-            document.getElementById('rejection_reason').value = '';
-            showModal('reject-modal');
-        }
-
-        /**
-         * Show bulk approve modal
-         */
-        function showBulkApproveModal() {
-            if (selectedRequests.size === 0) {
-                alert('⚠️ Παρακαλώ επιλέξτε τουλάχιστον μία αίτηση.');
-                return;
-            }
-
-            // Δημιουργία hidden inputs για επιλεγμένες αιτήσεις
-            const container = document.getElementById('bulk-approve-requests');
-            container.innerHTML = '';
-            
-            selectedRequests.forEach(requestId => {
-                const input = document.createElement('input');
-                input.type = 'hidden';
-                input.name = 'selected_requests[]';
-                input.value = requestId;
-                container.appendChild(input);
-            });
-
-            document.getElementById('bulk_comments').value = '';
-            showModal('bulk-approve-modal');
-        }
-
-        /**
-         * Show bulk reject modal
-         */
-        function showBulkRejectModal() {
-            if (selectedRequests.size === 0) {
-                alert('⚠️ Παρακαλώ επιλέξτε τουλάχιστον μία αίτηση.');
-                return;
-            }
-
-            // Δημιουργία hidden inputs για επιλεγμένες αιτήσεις
-            const container = document.getElementById('bulk-reject-requests');
-            container.innerHTML = '';
-            
-            selectedRequests.forEach(requestId => {
-                const input = document.createElement('input');
-                input.type = 'hidden';
-                input.name = 'selected_requests[]';
-                input.value = requestId;
-                container.appendChild(input);
-            });
-
-            document.getElementById('bulk_rejection_reason').value = '';
-            showModal('bulk-reject-modal');
-        }
-
-        /**
-         * Generic modal show function
-         */
-        function showModal(modalId) {
-            const modal = document.getElementById(modalId);
-            if (modal) {
-                modal.style.display = 'block';
-                document.body.style.overflow = 'hidden'; // Prevent background scrolling
-                
-                // Focus στο πρώτο input field
-                const firstInput = modal.querySelector('textarea, input[type="text"]');
-                if (firstInput) {
-                    setTimeout(() => firstInput.focus(), 100);
-                }
-            }
-        }
-
-        /**
-         * Generic modal close function
-         */
-        function closeModal(modalId) {
-            const modal = document.getElementById(modalId);
-            if (modal) {
-                modal.style.display = 'none';
-                document.body.style.overflow = 'auto'; // Restore scrolling
-            }
-        }
-
-        /**
-         * Close modal when clicking outside
-         */
-        document.addEventListener('click', function(e) {
-            if (e.target.classList.contains('modal')) {
-                closeModal(e.target.id);
-            }
-        });
-
-        /**
-         * ================================================================
-         * FORM VALIDATION FUNCTIONS
-         * ================================================================
-         */
-        function setupFormValidations() {
-            // Approve form validation
-            const approveForm = document.getElementById('approve-form');
-            if (approveForm) {
-                approveForm.addEventListener('submit', function(e) {
-                    const submitBtn = this.querySelector('button[type="submit"]');
-                    if (submitBtn) {
-                        submitBtn.innerHTML = '<span class="loading"></span> Εγκρίνεται...';
-                        submitBtn.disabled = true;
-                    }
-                });
-            }
-
-            // Reject form validation
-            const rejectForm = document.getElementById('reject-form');
-            if (rejectForm) {
-                rejectForm.addEventListener('submit', function(e) {
-                    const reason = document.getElementById('rejection_reason').value.trim();
-                    if (reason.length < 10) {
-                        e.preventDefault();
-                        alert('⚠️ Η αιτιολογία απόρριψης πρέπει να είναι τουλάχιστον 10 χαρακτήρες.');
-                        return false;
-                    }
-
-                    const submitBtn = this.querySelector('button[type="submit"]');
-                    if (submitBtn) {
-                        submitBtn.innerHTML = '<span class="loading"></span> Απορρίπτεται...';
-                        submitBtn.disabled = true;
-                    }
-                });
-            }
-
-            // Bulk approve form validation
-            const bulkApproveForm = document.getElementById('bulk-approve-form');
-            if (bulkApproveForm) {
-                bulkApproveForm.addEventListener('submit', function(e) {
-                    if (!confirm(`⚠️ ΠΡΟΣΟΧΗ!\n\nΘα εγκριθούν ${selectedRequests.size} αιτήσεις.\nΕίστε σίγουροι;`)) {
-                        e.preventDefault();
-                        return false;
-                    }
-
-                    const submitBtn = this.querySelector('button[type="submit"]');
-                    if (submitBtn) {
-                        submitBtn.innerHTML = '<span class="loading"></span> Εγκρίνονται...';
-                        submitBtn.disabled = true;
-                    }
-                });
-            }
-
-            // Bulk reject form validation
-            const bulkRejectForm = document.getElementById('bulk-reject-form');
-            if (bulkRejectForm) {
-                bulkRejectForm.addEventListener('submit', function(e) {
-                    const reason = document.getElementById('bulk_rejection_reason').value.trim();
-                    if (reason.length < 10) {
-                        e.preventDefault();
-                        alert('⚠️ Η αιτιολογία bulk απόρριψης πρέπει να είναι τουλάχιστον 10 χαρακτήρες.');
-                        return false;
-                    }
-
-                    if (!confirm(`⚠️ ΠΡΟΣΟΧΗ!\n\nΘα απορριφθούν ${selectedRequests.size} αιτήσεις.\nΕίστε σίγουροι;`)) {
-                        e.preventDefault();
-                        return false;
-                    }
-
-                    const submitBtn = this.querySelector('button[type="submit"]');
-                    if (submitBtn) {
-                        submitBtn.innerHTML = '<span class="loading"></span> Απορρίπτονται...';
-                        submitBtn.disabled = true;
-                    }
-                });
-            }
-        }
-
-        /**
-         * ================================================================
-         * FILTERING AND SEARCH FUNCTIONALITY
-         * ================================================================
-         */
-
-        /**
-         * Apply filters and reload page
-         */
-        function applyFilters() {
-            // Reset page to 1 when applying filters
-            document.querySelector('input[name="page"]').value = 1;
-            document.getElementById('filters-form').submit();
-        }
-
-        /**
-         * Clear all filters
-         */
-        function clearAllFilters() {
-            const form = document.getElementById('filters-form');
-            const selects = form.querySelectorAll('select');
-            const inputs = form.querySelectorAll('input[type="date"]');
-            
-            selects.forEach(select => {
-                if (select.name !== 'sort' && select.name !== 'order') {
-                    select.value = 'ALL';
-                } else if (select.name === 'sort') {
-                    select.value = 'submitted_at';
-                } else if (select.name === 'order') {
-                    select.value = 'ASC';
-                }
-            });
-
-            inputs.forEach(input => {
-                input.value = '';
-            });
-
-            applyFilters();
-        }
-
-        /**
-         * ================================================================
-         * REQUEST DETAILS FUNCTIONALITY
-         * ================================================================
-         */
-
-        /**
-         * View detailed request information
-         */
-        function viewRequestDetails(requestId) {
-            // Create popup window με request details
-            const popup = window.open(
-                `request-details.php?id=${requestId}&mode=popup`, 
-                'RequestDetails',
-                'width=800,height=700,scrollbars=yes,resizable=yes,toolbar=no,menubar=no'
-            );
-            
-            if (!popup) {
-                // Fallback: Navigate to details page in same window
-                window.open(`request-details.php?id=${requestId}`, '_blank');
-            }
-        }
-
-        /**
-         * ================================================================
-         * AUTO-REFRESH FUNCTIONALITY
-         * ================================================================
-         */
-        function initializeAutoRefresh() {
-            // Auto-refresh κάθε 60 δευτερόλεπτα για real-time updates
-            autoRefreshInterval = setInterval(checkForUpdates, 60000);
-            
-            // Check for visibility change to pause/resume auto-refresh
-            document.addEventListener('visibilitychange', function() {
-                if (document.hidden) {
-                    if (autoRefreshInterval) {
-                        clearInterval(autoRefreshInterval);
-                        autoRefreshInterval = null;
-                    }
-                } else {
-                    if (!autoRefreshInterval) {
-                        autoRefreshInterval = setInterval(checkForUpdates, 60000);
-                    }
-                }
-            });
-        }
-
-        /**
-         * Check for new updates via AJAX
-         */
-        function checkForUpdates() {
-            fetch('ajax/check-pending-updates.php', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    last_check: lastUpdateCheck,
-                    current_filters: getCurrentFilters()
-                })
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.has_updates) {
-                    showUpdateNotification(data.update_count);
-                }
-                lastUpdateCheck = new Date().toISOString();
-            })
-            .catch(error => {
-                console.log('Update check failed:', error);
-            });
-        }
-
-        /**
-         * Get current filter state
-         */
-        function getCurrentFilters() {
-            const form = document.getElementById('filters-form');
-            const formData = new FormData(form);
-            const filters = {};
-            
-            for (let [key, value] of formData.entries()) {
-                filters[key] = value;
-            }
-            
-            return filters;
-        }
-
-        /**
-         * Show notification για updates
-         */
-        function showUpdateNotification(updateCount) {
-            const notification = document.createElement('div');
-            notification.className = 'alert alert-info';
-            notification.style.position = 'fixed';
-            notification.style.top = '20px';
-            notification.style.right = '20px';
-            notification.style.zIndex = '9999';
-            notification.style.maxWidth = '350px';
-            notification.innerHTML = `
-                <strong>🔄 Νέες ενημερώσεις!</strong><br>
-                ${updateCount} νέες αλλαγές στις εκκρεμείς αιτήσεις.
-                <br>
-                <button onclick="location.reload()" class="btn btn-sm btn-primary" style="margin-top: 8px;">
-                    🔄 Ανανέωση
-                </button>
-                <button onclick="this.parentElement.remove()" class="btn btn-sm btn-secondary" style="margin-top: 8px; margin-left: 5px;">
-                    ✕ Κλείσιμο
-                </button>
-            `;
-
-            document.body.appendChild(notification);
-
-            // Auto-remove μετά από 15 δευτερόλεπτα
-            setTimeout(() => {
-                if (notification.parentElement) {
-                    notification.remove();
-                }
-            }, 15000);
-        }
-
-        /**
-         * ================================================================
-         * KEYBOARD SHORTCUTS
-         * ================================================================
-         */
-        function setupKeyboardShortcuts() {
-            document.addEventListener('keydown', function(e) {
-                // Ctrl+A: Select/Deselect All
-                if (e.ctrlKey && e.key === 'a' && !e.target.matches('input, textarea')) {
-                    e.preventDefault();
-                    const selectAllHeader = document.getElementById('select-all-header');
-                    if (selectAllHeader) {
-                        selectAllHeader.checked = !selectAllHeader.checked;
-                        selectAllHeader.dispatchEvent(new Event('change'));
-                    }
-                }
-
-                // Ctrl+E: Bulk Approve (if items selected)
-                if (e.ctrlKey && e.key === 'e') {
-                    e.preventDefault();
-                    if (selectedRequests.size > 0) {
-                        showBulkApproveModal();
-                    }
-                }
-
-                // Ctrl+R: Bulk Reject (if items selected)
-                if (e.ctrlKey && e.key === 'r') {
-                    e.preventDefault();
-                    if (selectedRequests.size > 0) {
-                        showBulkRejectModal();
-                    }
-                }
-
-                // F5 or Ctrl+R: Refresh page
-                if (e.key === 'F5' || (e.ctrlKey && e.key === 'r')) {
-                    // Let default behavior handle this
-                }
-
-                // Escape: Close modals or clear selections
-                if (e.key === 'Escape') {
-                    // Close any open modals
-                    const openModals = document.querySelectorAll('.modal[style*="block"]');
-                    openModals.forEach(modal => {
-                        closeModal(modal.id);
-                    });
-
-                    // If no modals, clear selections
-                    if (openModals.length === 0 && selectedRequests.size > 0) {
-                        const selectAllHeader = document.getElementById('select-all-header');
-                        if (selectAllHeader) {
-                            selectAllHeader.checked = false;
-                            selectAllHeader.dispatchEvent(new Event('change'));
-                        }
-                    }
-                }
-
-                // Enter: Submit focused form
-                if (e.key === 'Enter' && e.target.matches('textarea')) {
-                    // Allow Enter in textareas
-                    return;
-                }
-            });
-        }
-
-        /**
-         * ================================================================
-         * EXPORT FUNCTIONALITY
-         * ================================================================
-         */
-
-        /**
-         * Export requests to PDF or Excel
-         */
-        function exportRequests(format) {
-            const currentFilters = getCurrentFilters();
-            currentFilters.export = format;
-            currentFilters.selected_only = selectedRequests.size > 0 ? 'true' : 'false';
-            
-            if (selectedRequests.size > 0) {
-                currentFilters.selected_requests = Array.from(selectedRequests);
-            }
-            
-            // Create temporary form για export
-            const form = document.createElement('form');
-            form.method = 'POST';
-            form.action = 'export-pending-requests.php';
-            form.target = '_blank';
-            form.style.display = 'none';
-
-            // Add CSRF token
-            const csrfInput = document.createElement('input');
-            csrfInput.type = 'hidden';
-            csrfInput.name = 'csrf_token';
-            csrfInput.value = '<?php echo $csrf_token; ?>';
-            form.appendChild(csrfInput);
-
-            // Add filters as hidden inputs
-            for (const [key, value] of Object.entries(currentFilters)) {
-                if (Array.isArray(value)) {
-                    value.forEach(v => {
-                        const input = document.createElement('input');
-                        input.type = 'hidden';
-                        input.name = key + '[]';
-                        input.value = v;
-                        form.appendChild(input);
-                    });
-                } else {
-                    const input = document.createElement('input');
-                    input.type = 'hidden';
-                    input.name = key;
-                    input.value = value;
-                    form.appendChild(input);
-                }
-            }
-
-            document.body.appendChild(form);
-            form.submit();
-            document.body.removeChild(form);
-
-            // Show feedback message
-            showTemporaryMessage(
-                `📄 Export ${format.toUpperCase()} ξεκίνησε...`,
-                'info',
-                3000
-            );
-        }
-
-        /**
-         * ================================================================
-         * UTILITY FUNCTIONS
-         * ================================================================
-         */
-
-        /**
-         * Initialize tooltips
-         */
-        function initializeTooltips() {
-            const tooltipElements = document.querySelectorAll('[data-tooltip]');
-            tooltipElements.forEach(element => {
-                // Enhanced tooltip functionality could be added here
-                element.addEventListener('mouseenter', function() {
-                    // Custom tooltip implementation
-                });
-            });
-        }
-
-        /**
-         * Show temporary message
-         */
-        function showTemporaryMessage(message, type = 'info', duration = 5000) {
-            const alert = document.createElement('div');
-            alert.className = `alert alert-${type}`;
-            alert.style.position = 'fixed';
-            alert.style.top = '20px';
-            alert.style.left = '50%';
-            alert.style.transform = 'translateX(-50%)';
-            alert.style.zIndex = '9999';
-            alert.style.minWidth = '300px';
-            alert.style.textAlign = 'center';
-            alert.innerHTML = message;
-
-            document.body.appendChild(alert);
-
-            setTimeout(() => {
-                if (alert.parentElement) {
-                    alert.style.opacity = '0';
-                    alert.style.transition = 'opacity 0.5s ease';
-                    setTimeout(() => alert.remove(), 500);
-                }
-            }, duration);
-        }
-
-        /**
-         * Format number with thousands separator
-         */
-        function formatNumber(num) {
-            return new Intl.NumberFormat('el-GR').format(num);
-        }
-
-        /**
-         * Calculate business days between dates
-         */
-        function calculateBusinessDays(startDate, endDate) {
-            const start = new Date(startDate);
-            const end = new Date(endDate);
-            let businessDays = 0;
-            
-            const currentDate = new Date(start);
-            while (currentDate <= end) {
-                const dayOfWeek = currentDate.getDay();
-                if (dayOfWeek !== 0 && dayOfWeek !== 6) { // Skip weekends
-                    businessDays++;
-                }
-                currentDate.setDate(currentDate.getDate() + 1);
-            }
-            
-            return businessDays;
-        }
-
-        /**
-         * ================================================================
-         * DEBUG AND DEVELOPMENT FUNCTIONS
-         * ================================================================
-         */
-
-        /**
-         * Console logging for debugging
-         */
-        function logDebugInfo() {
-            console.group('🔍 Pending Requests Debug Info');
-            console.log('Selected Requests:', Array.from(selectedRequests));
-            console.log('Current Filters:', getCurrentFilters());
-            console.log('Total Requests:', document.querySelectorAll('.request-row').length);
-            console.log('Auto-refresh Active:', !!autoRefreshInterval);
-            console.log('Last Update Check:', lastUpdateCheck);
-            console.groupEnd();
-        }
-
-        // Expose debug function to console
-        window.debugPendingRequests = logDebugInfo;
-
-        /**
-         * Performance monitoring
-         */
-        window.addEventListener('load', function() {
-            const loadTime = performance.now();
-            console.log(`⚡ Page loaded in ${Math.round(loadTime)}ms`);
-            
-            // Log performance metrics
-            if (performance.getEntriesByType) {
-                const navigationTiming = performance.getEntriesByType('navigation')[0];
-                if (navigationTiming) {
-                    console.log(`📊 Navigation Timing:
-                        - DNS Lookup: ${Math.round(navigationTiming.domainLookupEnd - navigationTiming.domainLookupStart)}ms
-                        - Server Response: ${Math.round(navigationTiming.responseEnd - navigationTiming.requestStart)}ms
-                        - DOM Content Loaded: ${Math.round(navigationTiming.domContentLoadedEventEnd - navigationTiming.navigationStart)}ms
-                    `);
-                }
-            }
-        });
-
-        // Development shortcuts στο console
-        console.log(`
-🎯 KEYBOARD SHORTCUTS:
-- Ctrl+A: Select/Deselect All Requests
-- Ctrl+E: Bulk Approve (if selected)
-- Ctrl+R: Bulk Reject (if selected)  
-- Escape: Close modals or clear selections
-- F5: Refresh page
-
-🔧 DEBUG COMMANDS:
-- window.debugPendingRequests(): Show debug info
-
-📊 CURRENT PAGE STATS:
-- Total Pending: <?php echo $stats['total_pending'] ?? 0; ?>
-- Urgent Requests: <?php echo $stats['urgent'] ?? 0; ?>
-- Current Page: <?php echo $page; ?>/<?php echo $total_pages; ?>
-- User Role: <?php echo $is_admin ? 'Administrator' : 'Manager'; ?>
-        `);
-
-        /**
-         * ================================================================
-         * ADDITIONAL UTILITY FUNCTIONS
-         * ================================================================
-         */
-
-        /**
-         * Scroll to top smoothly
-         */
-        function scrollToTop() {
-            window.scrollTo({
-                top: 0,
-                behavior: 'smooth'
-            });
-        }
-
-        /**
-         * Copy request details to clipboard
-         */
-        function copyRequestDetails(requestId) {
-            const row = document.querySelector(`[data-request-id="${requestId}"]`);
-            if (row) {
-                const details = extractRequestDetails(row);
-                navigator.clipboard.writeText(details).then(() => {
-                    showTemporaryMessage('📋 Στοιχεία αντιγράφηκαν!', 'success', 2000);
-                });
-            }
-        }
-
-        /**
-         * Extract request details from table row
-         */
-        function extractRequestDetails(row) {
-            const cells = row.querySelectorAll('td');
-            // Extract text content from relevant cells
-            const employee = cells[1].textContent.trim();
-            const leaveType = cells[2].textContent.trim();
-            const leaveDate = cells[3].textContent.trim();
-            const duration = cells[4].textContent.trim();
-            const priority = cells[5].textContent.trim();
-            
-            return `Υπάλληλος: ${employee}
-Τύπος Άδειας: ${leaveType}
-Ημερομηνία: ${leaveDate}
-Διάρκεια: ${duration}
-Προτεραιότητα: ${priority}`;
-        }
-
-        /**
-         * Print current page
-         */
-        function printPage() {
-            window.print();
-        }
-
-        /**
-         * Toggle compact view
-         */
-        function toggleCompactView() {
-            const table = document.querySelector('.requests-table');
-            table.classList.toggle('compact-view');
-            
-            // Save preference to localStorage
-            const isCompact = table.classList.contains('compact-view');
-            localStorage.setItem('pendingRequestsCompactView', isCompact);
-        }
-
-        /**
-         * Load saved preferences
-         */
-        function loadUserPreferences() {
-            // Restore compact view preference
-            const isCompact = localStorage.getItem('pendingRequestsCompactView') === 'true';
-            if (isCompact) {
-                document.querySelector('.requests-table').classList.add('compact-view');
-            }
-        }
-
-        // Load preferences on page load
-        document.addEventListener('DOMContentLoaded', loadUserPreferences);
-
-        /**
-         * ================================================================
-         * ERROR HANDLING AND RECOVERY
-         * ================================================================
-         */
-
-        /**
-         * Global error handler
-         */
-        window.addEventListener('error', function(e) {
-            console.error('JavaScript Error:', e.error);
-            
-            // Show user-friendly error message
-            showTemporaryMessage(
-                '⚠️ Προέκυψε σφάλμα. Παρακαλώ ανανεώστε τη σελίδα.',
-                'danger',
-                5000
-            );
-        });
-
-        /**
-         * Handle network errors
-         */
-        window.addEventListener('online', function() {
-            showTemporaryMessage('🌐 Η σύνδεση αποκαταστάθηκε!', 'success', 3000);
-            // Resume auto-refresh
-            if (!autoRefreshInterval) {
-                initializeAutoRefresh();
-            }
-        });
-
-        window.addEventListener('offline', function() {
-            showTemporaryMessage('📡 Χωρίς σύνδεση στο διαδίκτυο', 'warning', 5000);
-            // Pause auto-refresh
-            if (autoRefreshInterval) {
-                clearInterval(autoRefreshInterval);
-                autoRefreshInterval = null;
-            }
-        });
-
-        /**
-         * ================================================================
-         * ACCESSIBILITY ENHANCEMENTS
-         * ================================================================
-         */
-
-        /**
-         * Keyboard navigation for table
-         */
-        function setupKeyboardNavigation() {
-            const rows = document.querySelectorAll('.request-row');
-            let currentRowIndex = -1;
-
-            document.addEventListener('keydown', function(e) {
-                if (e.target.matches('input, textarea, select')) return;
-
-                switch(e.key) {
-                    case 'ArrowDown':
-                        e.preventDefault();
-                        currentRowIndex = Math.min(currentRowIndex + 1, rows.length - 1);
-                        highlightRow(currentRowIndex);
-                        break;
-                    case 'ArrowUp':
-                        e.preventDefault();
-                        currentRowIndex = Math.max(currentRowIndex - 1, 0);
-                        highlightRow(currentRowIndex);
-                        break;
-                    case ' ': // Space to toggle selection
-                        e.preventDefault();
-                        if (currentRowIndex >= 0) {
-                            const checkbox = rows[currentRowIndex].querySelector('.request-checkbox');
-                            if (checkbox) {
-                                checkbox.checked = !checkbox.checked;
-                                checkbox.dispatchEvent(new Event('change'));
-                            }
-                        }
-                        break;
-                }
-            });
-        }
-
-        /**
-         * Highlight current row
-         */
-        function highlightRow(index) {
-            // Remove previous highlights
-            document.querySelectorAll('.keyboard-highlight').forEach(row => {
-                row.classList.remove('keyboard-highlight');
-            });
-
-            const rows = document.querySelectorAll('.request-row');
-            if (rows[index]) {
-                rows[index].classList.add('keyboard-highlight');
-                rows[index].scrollIntoView({ behavior: 'smooth', block: 'center' });
-            }
-        }
-
-        // Initialize keyboard navigation
-        document.addEventListener('DOMContentLoaded', setupKeyboardNavigation);
-
-        /**
-         * ================================================================
-         * FINAL INITIALIZATION
-         * ================================================================
-         */
-
-        // Ensure all functionality is ready
-        document.addEventListener('DOMContentLoaded', function() {
-            // Double-check all critical elements are present
-            const criticalElements = [
-                'filters-form',
-                'bulk-approve-btn', 
-                'bulk-reject-btn',
-                'selected-count'
-            ];
-
-            criticalElements.forEach(id => {
-                if (!document.getElementById(id)) {
-                    console.warn(`⚠️ Critical element missing: ${id}`);
-                }
-            });
-
-            // Mark page as fully loaded
-            document.body.setAttribute('data-page-loaded', 'true');
-            
-            // Final console log
-            console.log('✅ Pending Requests Management System fully initialized');
-        });
-    </script>
-
-    <!-- Add some additional CSS for enhanced functionality -->
-    <style>
-        /* Compact view styles */
-        .requests-table.compact-view th,
-        .requests-table.compact-view td {
-            padding: 8px 6px;
-            font-size: 0.85rem;
-        }
-
-        /* Keyboard navigation highlight */
-        .keyboard-highlight {
-            outline: 2px solid #667eea;
-            outline-offset: -2px;
-            background-color: rgba(102, 126, 234, 0.1) !important;
-        }
-
-        /* Enhanced loading state */
-        .loading-state {
-            opacity: 0.6;
-            pointer-events: none;
-            position: relative;
-        }
-
-        .loading-state::after {
-            content: '';
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            width: 20px;
-            height: 20px;
-            margin: -10px 0 0 -10px;
-            border: 2px solid #f3f3f3;
-            border-top: 2px solid #667eea;
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-        }
-
-        /* Responsive table improvements */
-        @media (max-width: 768px) {
-            .requests-table {
-                display: block;
-                overflow-x: auto;
-                white-space: nowrap;
-            }
-            
-            .modal-content {
-                width: 95%;
-                margin: 20px auto;
-                max-height: 90vh;
-            }
-        }
-
-        /* Print styles */
-        @media print {
-            .controls-section,
-            .pagination-container,
-            .action-buttons,
-            .back-btn {
-                display: none !important;
-            }
-            
-            .header {
-                background: white !important;
-                color: black !important;
-            }
-        }
-    </style>
-</body>
-</html>
