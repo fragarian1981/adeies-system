@@ -1,0 +1,158 @@
+Δομή βάσης fragarian_db
+
+
+
+DESCRIBE users;
+Field 	Type 	Null 	Key 	Default 	Extra 	
+ΜΗΤΡΩΟ 	varchar(20) 	NO 	PRI 	NULL 	
+ΒΑΘΜΟΣ 	varchar(100) 	YES 		NULL 	
+ΕΠΩΝΥΜΟ 	varchar(100) 	YES 		NULL 	
+ΟΝΟΜΑ 	varchar(100) 	YES 		NULL 	
+ΠΑΤΡΩΝΥΜΟ 	varchar(100) 	YES 		NULL 	
+EMAIL 	varchar(150) 	YES 		NULL 	
+ΓΡΑΦΕΙΟ 	varchar(200) 	YES 		NULL 	
+ΦΥΛΛΟ 	enum('ΑΡΡΕΝ','ΘΥΛΗ') 	YES 		ΑΡΡΕΝ 	
+ΠΡΟΙΣΤΑΜΕΝΟΣ 	tinyint(1) 	YES 		0 	
+ADMINISTRATOR 	tinyint(1) 	YES 		0 	
+ΕΝΕΡΓΟΣ 	tinyint(1) 	YES 		1 	
+ΗΜΕΡΟΜΗΝΙΑ_ΑΦΑΙΡΕΣΗΣ 	timestamp 	YES 		NULL 	
+PIN 	varchar(50) 	YES 		NULL 	
+EXTRA_PIN_ADMINISTRATOR 	varchar(50) 	YES 		NULL 	
+GDYE 	int(11) 	YES 		0 	
+
+DESCRIBE leave_schedule;
+Field 	Type 	Null 	Key 	Default 	Extra 	
+id 	int(11) 	NO 	PRI 	NULL 	auto_increment
+ΜΗΤΡΩΟ 	varchar(10) 	NO 	MUL 	NULL 	
+ΒΑΘΜΟΣ 	varchar(50) 	NO 		NULL 	
+ΟΝΟΜΑΤΕΠΩΝΥΜΟ 	varchar(100) 	NO 		NULL 	
+ΓΡΑΦΕΙΟ 	varchar(50) 	YES 		ΕΠΙΤΕΛΕΙΟ 	
+desired_date 	date 	NO 	MUL 	NULL 	
+desired_days 	int(11) 	NO 		NULL 	
+desired_travel_days 	int(11) 	YES 		0 	
+desired_description 	text 	YES 		NULL 	
+scheduled_date 	date 	YES 	MUL 	NULL 	
+scheduled_days 	int(11) 	YES 		NULL 	
+scheduled_travel_days 	int(11) 	YES 		0 	
+scheduled_description 	text 	YES 		NULL 	
+status 	enum('ΕΠΙΘΥΜΙΑ','ΠΡΟΓΡΑΜΜΑΤΙΣΜΕΝΟ','ΟΛΟΚΛΗΡΩΜΕΝΟ','ΑΚΥΡΩΜΕΝΟ') 	YES 	MUL 	ΕΠΙΘΥΜΙΑ 	
+notes 	text 	YES 		NULL 	
+created_at 	timestamp 	NO 		current_timestamp() 	
+updated_at 	timestamp 	NO 		current_timestamp() 	on update current_timestamp()
+created_by 	varchar(10) 	YES 		NULL 	
+updated_by 	varchar(10) 	YES 		NULL 	
+
+DESCRIBE leave_requests does not exist
+
+SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'users' ORDER BY ORDINAL_POSITION;	
+COLUMN_NAME 	DATA_TYPE 	IS_NULLABLE 	COLUMN_DEFAULT 	
+ΜΗΤΡΩΟ 	varchar 	NO 	NULL
+USER 	char 	YES 	NULL
+ΒΑΘΜΟΣ 	varchar 	YES 	NULL
+CURRENT_CONNECTIONS 	bigint 	NO 	NULL
+ΕΠΩΝΥΜΟ 	varchar 	YES 	NULL
+TOTAL_CONNECTIONS 	bigint 	NO 	NULL
+ΟΝΟΜΑ 	varchar 	YES 	NULL
+ΠΑΤΡΩΝΥΜΟ 	varchar 	YES 	NULL
+EMAIL 	varchar 	YES 	NULL
+ΓΡΑΦΕΙΟ 	varchar 	YES 	NULL
+ΦΥΛΛΟ 	enum 	YES 	'ΑΡΡΕΝ'
+ΠΡΟΙΣΤΑΜΕΝΟΣ 	tinyint 	YES 	0
+ADMINISTRATOR 	tinyint 	YES 	0
+ΕΝΕΡΓΟΣ 	tinyint 	YES 	1
+ΗΜΕΡΟΜΗΝΙΑ_ΑΦΑΙΡΕΣΗΣ 	timestamp 	YES 	NULL
+PIN 	varchar 	YES 	NULL
+EXTRA_PIN_ADMINISTRATOR 	varchar 	YES 	NULL
+GDYE 	int 	YES 	0
+
+SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'leave_schedule' ORDER BY ORDINAL_POSITION;
+	
+COLUMN_NAME 	DATA_TYPE 	IS_NULLABLE 	COLUMN_DEFAULT 	
+id 	int 	NO 	NULL
+ΜΗΤΡΩΟ 	varchar 	NO 	NULL
+ΒΑΘΜΟΣ 	varchar 	NO 	NULL
+ΟΝΟΜΑΤΕΠΩΝΥΜΟ 	varchar 	NO 	NULL
+ΓΡΑΦΕΙΟ 	varchar 	YES 	'ΕΠΙΤΕΛΕΙΟ'
+desired_date 	date 	NO 	NULL
+desired_days 	int 	NO 	NULL
+desired_travel_days 	int 	YES 	0
+desired_description 	text 	YES 	NULL
+scheduled_date 	date 	YES 	NULL
+scheduled_days 	int 	YES 	NULL
+scheduled_travel_days 	int 	YES 	0
+scheduled_description 	text 	YES 	NULL
+status 	enum 	YES 	'ΕΠΙΘΥΜΙΑ'
+notes 	text 	YES 	NULL
+created_at 	timestamp 	NO 	current_timestamp()
+updated_at 	timestamp 	NO 	current_timestamp()
+created_by 	varchar 	YES 	NULL
+updated_by 	varchar 	YES 	NULL
+
+SHOW TABLES;
+
+Tables_in_fragarian_db 	
+adeies_ypoloipa
+adeies_ypoloipa_backup_20250814_125132
+aitiseis_log
+balances
+leave_schedule
+leave_schedule_view
+reports
+requests
+requests_log
+scheduled_leaves
+system_settings
+users
+users_backup_20250814_125132
+wp_commentmeta
+wp_comments
+wp_links
+wp_options
+wp_postmeta
+wp_posts
+wp_term_relationships
+wp_term_taxonomy
+wp_termmeta
+wp_terms
+wp_usermeta
+wp_users
+
+ Η MySQL επέστρεψε ένα άδειο σύνολο αποτελεσμάτων (π.χ. καμμία εγγραφή).
+SELECT TABLE_NAME, COLUMN_NAME, CONSTRAINT_NAME, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE WHERE REFERENCED_TABLE_SCHEMA = DATABASE() AND REFERENCED_TABLE_NAME IS NOT NULL;
+	TABLE_NAME 	COLUMN_NAME 	CONSTRAINT_NAME 	REFERENCED_TABLE_NAME 	REFERENCED_COLUMN_NAME 
+
+	SELECT * FROM `users`
+
+	ΜΗΤΡΩΟ 	ΒΑΘΜΟΣ 	ΕΠΩΝΥΜΟ 	ΟΝΟΜΑ 	ΠΑΤΡΩΝΥΜΟ 	EMAIL 	ΓΡΑΦΕΙΟ 	ΦΥΛΛΟ 	ΠΡΟΙΣΤΑΜΕΝΟΣ 	ADMINISTRATOR 	ΕΝΕΡΓΟΣ 	ΗΜΕΡΟΜΗΝΙΑ_ΑΦΑΙΡΕΣΗΣ 	PIN 	EXTRA_PIN_ADMINISTRATOR 	GDYE 	
+	Επεξεργασία Επεξεργασία 	Αντιγραφή Αντιγραφή 	Διαγραφή Διαγραφή 	249052 	Αστυνομικός Διευθυντής 	ΤΣΙΡΙΛΑΚΗΣ 	ΜΙΧΑΗΛ 	ΓΕΩΡΓΙΟΣ 	m.tsirilakis@astynomia.gr 	ΔΙΕΥΘΥΝΤΗΣ 	ΑΡΡΕΝ 	1 	0 	1 	NULL 	249052 	0 	0
+	Επεξεργασία Επεξεργασία 	Αντιγραφή Αντιγραφή 	Διαγραφή Διαγραφή 	250247 	Ανθυπαστυνόμος 	ΜΑΡΚΟΠΟΥΛΟΣ 	ΚΩΝΣΤΑΝΤΙΝΟΣ 	ΕΜΜΑΝΟΥΗΛ 	ke.markopoulos@astynomia.gr 	ΚΕΝΤΡΟ Ρ/Τ. 	ΑΡΡΕΝ 	0 	0 	1 	NULL 	250247 	0 	0
+	Επεξεργασία Επεξεργασία 	Αντιγραφή Αντιγραφή 	Διαγραφή Διαγραφή 	252456 	Αρχιφύλακας 	ΜΑΡΑΚΗΣ 	ΓΕΩΡΓΙΟΣ 	ΕΜΜΑΝΟΥΗΛ 	ge.marakis@astynomia.gr 	ΚΕΝΤΡΟ Ρ/Τ. 	ΑΡΡΕΝ 	0 	0 	1 	NULL 	nan 	0 	0
+	Επεξεργασία Επεξεργασία 	Αντιγραφή Αντιγραφή 	Διαγραφή Διαγραφή 	253379 	Αρχιφύλακας 	ΣΤΑΘΑΚΗΣ 	ΕΥΣΤΑΘΙΟΣ 	ΝΙΚΟΛΑΟΣ 	e.stathakis@astynomia.gr 	ΚΕΝΤΡΟ Ρ/Τ. 	ΑΡΡΕΝ 	0 	0 	1 	NULL 	nan 	0 	0
+	Επεξεργασία Επεξεργασία 	Αντιγραφή Αντιγραφή 	Διαγραφή Διαγραφή 	253464 	Αρχιφύλακας 	ΔΕΜΕΤΖΟΣ 	ΜΙΧΑΗΛ 	ΓΕΩΡΓΙΟΣ 	m.demetzos@astynomia.gr 	Γ.Δ.Ε.Ε.Α. 	ΑΡΡΕΝ 	0 	0 	1 	NULL 	253464 	0 	0
+	Επεξεργασία Επεξεργασία 	Αντιγραφή Αντιγραφή 	Διαγραφή Διαγραφή 	253487 	Αρχιφύλακας 	ΚΑΜΠΑΝΟΣ 	ΕΜΜΑΝΟΥΗΛ 	ΜΙΧΑΗΛ 	e.kampanos@astynomia.gr 	ΟΔΗΓΟΣ 	ΑΡΡΕΝ 	0 	0 	1 	NULL 	253487 	0 	0
+	Επεξεργασία Επεξεργασία 	Αντιγραφή Αντιγραφή 	Διαγραφή Διαγραφή 	253536 	Αστυνόμος Β' 	ΡΙΤΖΑΚΗΣ 	ΑΝΔΡΕΑΣ 	ΕΜΜΑΝΟΥΗΛ 	a.ritzakis@astynomia.gr 	Γ.Ε.Ε. ΛΑΣΙΘΙΟΥ 	ΑΡΡΕΝ 	0 	0 	1 	NULL 	nan 	0 	0
+	Επεξεργασία Επεξεργασία 	Αντιγραφή Αντιγραφή 	Διαγραφή Διαγραφή 	253541 	Αρχιφύλακας 	ΤΣΑΓΚΑΡΑΚΗΣ 	ΚΩΝΣΤΑΝΤΙΝΟΣ 	ΓΕΩΡΓΙΟΣ 	k.tsagkarakis@astynomia.gr 	Ρ/Τ 	ΑΡΡΕΝ 	0 	0 	1 	NULL 	253541 	0 	0
+	Επεξεργασία Επεξεργασία 	Αντιγραφή Αντιγραφή 	Διαγραφή Διαγραφή 	255400 	Ανθυπαστυνόμος 	ΜΑΡΤΙΝΟΒΙΤΣ 	ΝΙΚΟΛΑΣ 	ΒΑΣΙΛΕΙΟΣ 	n.martinovits@astynomia.gr 	Γ.Ε.Ε. ΛΑΣΙΘΙΟΥ 	ΑΡΡΕΝ 	0 	0 	1 	NULL 	nan 	0 	0
+	Επεξεργασία Επεξεργασία 	Αντιγραφή Αντιγραφή 	Διαγραφή Διαγραφή 	255421 	Υπαστυνόμος Β' 	ΜΗΝΑΔΑΚΗΣ 	ΕΜΜΑΝΟΥΗΛ 	ΝΙΚΟΛΑΟΣ 	e.minadakis@astynomia.gr 	Γ.Δ.Υ.Ε. 	ΑΡΡΕΝ 	0 	0 	1 	NULL 	255421 	0 	1
+	Επεξεργασία Επεξεργασία 	Αντιγραφή Αντιγραφή 	Διαγραφή Διαγραφή 	256258 	Αστυνομικός Διευθυντής 	ΤΖΑΓΚΑΡΑΚΗΣ 	ΚΩΝΣΤΑΝΤΙΝΟΣ 	ΕΜΜΑΝΟΥΗΛ 	k.tzagkarakis@astynomia.gr 	ΥΠΟΔΙΕΥΘΥΝΤΗΣ Α' 	ΑΡΡΕΝ 	1 	0 	1 	NULL 	256258 	0 	0
+	Επεξεργασία Επεξεργασία 	Αντιγραφή Αντιγραφή 	Διαγραφή Διαγραφή 	257952 	Υπαστυνόμος Β' 	ΚΟΝΤΟΛΑΙΜΑΚΗΣ 	ΔΗΜΗΤΡΙΟΣ 	ΜΙΧΑΗΛ 	d.kontolaimakis@astynomia.gr 	Γ.Δ.Ε.Ε.Α. 	ΑΡΡΕΝ 	0 	0 	1 	NULL 	257952 	0 	0
+	Επεξεργασία Επεξεργασία 	Αντιγραφή Αντιγραφή 	Διαγραφή Διαγραφή 	258356 	Αστυνομικός Υποδιευθυντής 	ΠΑΝΑΓΙΩΤΑΚΗΣ 	ΓΕΩΡΓΙΟΣ 	ΖΑΧΑΡΙΑΣ 	gz.panagiotakis@astynomia.gr 	ΥΠΟΔΙΕΥΘΥΝΤΗΣ Β' 	ΑΡΡΕΝ 	1 	0 	1 	NULL 	258356.0 	0 	0
+	Επεξεργασία Επεξεργασία 	Αντιγραφή Αντιγραφή 	Διαγραφή Διαγραφή 	258807 	Υπαστυνόμος Β' 	ΧΑΜΗΛΑΚΗΣ 	ΧΑΡΙΔΗΜ 	ΕΜΜΑΝΟΥΗΛ 	c.chamilakis@astynomia.gr 	ΔΙΑΧΕΙΡΗΣΗΣ 	ΑΡΡΕΝ 	0 	0 	1 	NULL 	258807 	0 	0
+	Επεξεργασία Επεξεργασία 	Αντιγραφή Αντιγραφή 	Διαγραφή Διαγραφή 	262477 	Υπαστυνόμος Β' 	ΤΑΜΙΩΛΑΚΗ 	ΚΑΛΛΙΟΠΗ 	ΓΕΩΡΓΙΟΣ 	k.tamiolaki@astynomia.gr 	Γ.Α. 	ΘΥΛΗ 	0 	0 	1 	NULL 	262477 	0 	0
+	Επεξεργασία Επεξεργασία 	Αντιγραφή Αντιγραφή 	Διαγραφή Διαγραφή 	264121 	Ανθυπαστυνόμος 	ΤΖΑΝΑΚΗΣ 	ΣΤΕΡΓΙΟΣ 	ΕΜΜΑΝΟΥΗΛ 	s.tzanakis@astynomia.gr 	ΔΙΑΒΑΤΗΡΙΩΝ 	ΑΡΡΕΝ 	0 	0 	1 	NULL 	nan 	0 	0
+	Επεξεργασία Επεξεργασία 	Αντιγραφή Αντιγραφή 	Διαγραφή Διαγραφή 	265741 	Υπαστυνόμος Β' 	ΦΡΑΓΚΑΚΗΣ 	ΚΩΝΣΤΑΝΤΙΝΟΣ 	ΣΑΒΒΑΣ 	k.fragkakis@astynomia.gr 	ΠΛΗΡΟΦ & ΔΙΚΤΥΩΝ 	ΑΡΡΕΝ 	1 	1 	1 	NULL 	9681 	kostas9681 	0
+	Επεξεργασία Επεξεργασία 	Αντιγραφή Αντιγραφή 	Διαγραφή Διαγραφή 	268256 	Αρχιφύλακας 	ΤΖΑΝΑΚΗΣ 	ΕΥΑΓΓΕΛΟΣ 	ΖΑΧΑΡΙΑΣ 	e.tzanakis@astynomia.gr 	Γ.Δ.Υ.Ε. 	ΑΡΡΕΝ 	0 	0 	1 	NULL 	268256 	0 	1
+	Επεξεργασία Επεξεργασία 	Αντιγραφή Αντιγραφή 	Διαγραφή Διαγραφή 	269979 	Αρχιφύλακας 	ΒΑΣΙΛΑΚΗΣ 	ΕΥΑΓΓΕΛΟΣ 	ΕΜΜΑΝΟΥΗΛ 	ee.vasilakis@astynomia.gr 	Γ.Ε.Ε. ΛΑΣΙΘΙΟΥ 	ΑΡΡΕΝ 	0 	0 	1 	NULL 	nan 	0 	0
+	Επεξεργασία Επεξεργασία 	Αντιγραφή Αντιγραφή 	Διαγραφή Διαγραφή 	270325 	Αρχιφύλακας 	ΚΑΖΑΜΙΑΣ 	ΙΩΑΝΝΗΣ 	ΣΤΕΦΑΝΟΣ 	i.kazamias@astynomia.gr 	Γ.Δ.Υ.Ε. 	ΑΡΡΕΝ 	0 	0 	1 	NULL 	270325 	0 	1
+	Επεξεργασία Επεξεργασία 	Αντιγραφή Αντιγραφή 	Διαγραφή Διαγραφή 	270956 	Αρχιφύλακας 	ΝΤΑΛΛΑ 	ΜΑΡΓΑΡΙΤΑ 	ΝΙΚΟΛΑΟΣ 	m.ntalla@astynomia.gr 	Γ.Α. 	ΘΥΛΗ 	0 	0 	1 	NULL 	270956 	0 	0
+	Επεξεργασία Επεξεργασία 	Αντιγραφή Αντιγραφή 	Διαγραφή Διαγραφή 	271304 	Αρχιφύλακας 	ΣΠΥΡΙΔΑΚΗΣ 	ΙΩΑΝΝΗΣ 	ΚΩΝΣΤΑΝΤΙΝΟΣ 	ik.spyridakis@astynomia.gr 	ΚΕΝΤΡΟ Ρ/Τ. 	ΑΡΡΕΝ 	0 	0 	1 	NULL 	nan 	0 	0
+	Επεξεργασία Επεξεργασία 	Αντιγραφή Αντιγραφή 	Διαγραφή Διαγραφή 	272193 	Αρχιφύλακας 	ΖΕΡΒΑΚΗ 	ΜΑΡΙΑ ΣΠΥΡΙΔΟΥΛΑ 	ΕΜΜΑΝΟΥΗΛ 	m.zervaki@astynomia.gr 	ΔΙΑΒΑΤΗΡΙΩΝ 	ΘΥΛΗ 	0 	0 	1 	NULL 	nan 	0 	0
+	Επεξεργασία Επεξεργασία 	Αντιγραφή Αντιγραφή 	Διαγραφή Διαγραφή 	272288 	Αρχιφύλακας 	ΚΑΠΕΤΑΝΑΚΗΣ 	ΓΕΩΡΓΙΟΣ 	ΑΝΔΡΕΑΣ 	g.kapetanakis@astynomia.gr 	Γ.Δ.Ε.Ε.Α. 	ΑΡΡΕΝ 	0 	0 	1 	NULL 	272288 	0 	0
+	Επεξεργασία Επεξεργασία 	Αντιγραφή Αντιγραφή 	Διαγραφή Διαγραφή 	272433 	Αρχιφύλακας 	ΚΟΥΝΑΛΑΚΗΣ 	ΚΩΝΣΤΑΝΤΙΝΟΣ 	ΙΩΑΝΝΗΣ 	k.kounalakis@astynomia.gr 	ΔΙΑΧΕΙΡΗΣΗΣ 	ΑΡΡΕΝ 	0 	0 	1 	NULL 	272433 	0 	0
+	
+	SELECT TABLE_NAME, COLUMN_NAME, CONSTRAINT_NAME, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA = 'fragarian_db' AND REFERENCED_TABLE_NAME IS NOT NULL;
+		
+TABLE_NAME 	COLUMN_NAME 	CONSTRAINT_NAME 	REFERENCED_TABLE_NAME 	REFERENCED_COLUMN_NAME 	
+adeies_ypoloipa 	ΜΗΤΡΩΟ 	adeies_ypoloipa_ibfk_1 	users 	ΜΗΤΡΩΟ
+aitiseis_log 	ΜΗΤΡΩΟ 	aitiseis_log_ibfk_1 	users 	ΜΗΤΡΩΟ
+reports 	ΣΥΝΤΑΚΤΗΣ 	reports_ibfk_1 	users 	ΜΗΤΡΩΟ
